@@ -3786,7 +3786,7 @@ int main(int argc, char **argv)
 #ifdef WOODY_GUI
     if (!wenv("WOODY_CONSOLE")) freopen("woodyre.log", "w", stdout);              /* the windowed release build: the log beside woodyre.cfg */
 #endif
-    int verify = 0;                                                               /* --verify: check the data against the supported CDs and quit */
+    int verify = 0, dump_all = 0;                                                              /* --verify: check the data against the supported CDs and quit */
     const char *shot_path = NULL; double shot_after = 0;                          /* --shot file.ppm seconds: screenshot then quit */
     int have_cam = 0; float cam_args[5] = {0, 0, 0, 0, 0};                          /* --cam x y z yaw pitch (degrees) */
     double jump_at = -1; float max_y = -1e30f, start_y = 0;                       /* --jump T: hold jump from T s for 1 s (testing), reports the apex */
@@ -3831,7 +3831,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--fullscreen")) full_arg = 1;
         else if (!strcmp(argv[i], "--aspect") && i + 1 < argc) { wide_arg = strcmp(argv[i + 1], "4:3") != 0; i += 1; }
         else if (!strcmp(argv[i], "--verify")) verify = 1;
-        else if (!strcmp(argv[i], "--dumptex")) tp_set_dump(1);                       /* port extra: every texture to mods\dump\<level>\ (docs/TEXTURES.md) */
+        else if (!strcmp(argv[i], "--dumptex")) { tp_set_dump(1); if (i + 1 < argc && !strcmp(argv[i + 1], "all")) { dump_all = 1; i += 1; } }   /* port extra: every texture to mods\dump\<level>\ (docs/TEXTURES.md); "all" = every level, then quit */
     }
     if (verify) {
         int bad = data_verify(dir);
@@ -3871,6 +3871,12 @@ int main(int argc, char **argv)
     opt_apply();                                                                       /* 0x4691e2: the volumes from the cfg at sound start */
     audio_reverse_stereo(wenv("WOODY_REVSTEREO") ? atoi(wenv("WOODY_REVSTEREO")) != 0 : g_setup.rev);   /* 0x4691f4: [0x5e81c0] = cfg +0x74 */
     in_read_cfg(dir);                                                                  /* 0x405e0f: Woody.cfg (key bindings, controller mode) */
+    if (dump_all) {                                                                    /* --dumptex all: load and drop every level once (its .tex and banks upload at load) */
+        static Level D; int n = 0;
+        for (int i = 0; i < 29; i++) { g_level = i; if (level_load(&D, dir, k_levels[i])) continue; level_free(&D); n++; }
+        printf("texture dump: %d levels done (BlackBox images are only made while it is played)\n", n);
+        return 0;
+    }
     if (logo < 0) logo = !(argc > 2 && argv[2][0] != '-') && !wenv("WOODY_NOLOGO") && !shot_path && enter_at < 0 && !wenv("WOODY_KEYS") && !wenv("WOODY_SHOTSEQ") && g_logos;
     if (logo) logos_play(&win, dir);                                                   /* boot state 2 (0x402649): only when booting to the title; a level on the command line or a scripted run skips them */
     static Level L; g_level = level_index(lvl); if (level_load(&L, dir, lvl)) return 1;

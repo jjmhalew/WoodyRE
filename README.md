@@ -86,7 +86,7 @@ as `Program Files`, or a temporary one, such as when the exe is started from ins
   is imported once.
 - `woodyre.log`: the engine log, useful in bug reports.
 
-Command line: `WoodyRE.exe [--windowed | --fullscreen] [--res WxH] [--aspect 4:3|wide] [--nologo] [--verify] [--dumptex]`.
+Command line: `WoodyRE.exe [--windowed | --fullscreen] [--res WxH] [--aspect 4:3|wide] [--nologo] [--verify] [--dumptex [all]]`.
 
 ### Texture packs
 Any texture can be replaced by a PNG of any size, for example an HD version. Put the PNGs in `mods\textures\` next to
@@ -94,6 +94,11 @@ Any texture can be replaced by a PNG of any size, for example an HD version. Put
 written to `mods\dump\<level>\` as `<w>x<h>_<hash>.png`. Edit or upscale a file, keep its `_<hash>.png` ending (the part
 before it may be anything) and put it in `mods\textures\`. Keep the aspect ratio; transparency works through the PNG's
 alpha. Details in [docs/TEXTURES.md](docs/TEXTURES.md).
+
+`make_hd_textures.bat` makes a 4x AI-upscaled pack of the whole game on your own PC (any Vulkan GPU, a minute or two):
+it collects every texture with `--dumptex all`, downloads the Real-ESRGAN upscaler once and writes `mods\textures\hd`.
+`make_hd_textures.bat anime` uses a crisper cartoon model. Delete PNGs you do not like, or the folder to go back. The pack
+is made from the game's own art: keep it for yourself.
 
 ## Building from source
 Windows 10 or 11; nothing needs to be installed first.

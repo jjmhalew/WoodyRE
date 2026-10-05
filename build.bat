@@ -3,6 +3,7 @@ rem build.bat - builds WoodyRE from source on Windows 10/11; nothing to install 
 rem   build.bat             WoodyRE.exe, the game (start it, it asks for the CD the first time)
 rem   build.bat dev         out\woody.exe, the developer build (console log, same engine)
 rem   build.bat standalone  WoodyRE-standalone.exe: WoodyRE.exe + YOUR game files in one exe, for your own use only
+rem   build.bat texup       build\texup.exe, the image helper of make_hd_textures.bat
 rem The C compiler is Zig (ziglang.org): a zig on PATH or "pip install ziglang" is used when there, otherwise the official
 rem Windows build is downloaded once into tools\zig and checked against its SHA-256.
 setlocal
@@ -24,6 +25,12 @@ if /i "%~1"=="dev" (
     echo Building out\woody.exe ^(developer build^)...
     %ZIG% cc -std=c99 -O2 %CPU% -o out\woody.exe %SRC% res\woodyre.rc %LIBS% || goto :fail
     echo Done: out\woody.exe
+    exit /b 0
+)
+
+if /i "%~1"=="texup" (
+    if not exist build mkdir build
+    %ZIG% cc -std=c99 -O2 %CPU% -o build\texup.exe tools\native\texup.c || goto :fail
     exit /b 0
 )
 
@@ -56,7 +63,7 @@ where zig >nul 2>nul && (set "ZIG=zig" & exit /b 0)
 python -m ziglang version >nul 2>nul && (set "ZIG=python -m ziglang" & exit /b 0)
 echo Zig %ZIG_VER% (the C compiler, about 95 MB) is not here yet: downloading it from ziglang.org into tools\zig ...
 if not exist tools\zig mkdir tools\zig
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -Uri 'https://ziglang.org/download/%ZIG_VER%/%ZIG_NAME%.zip' -OutFile 'tools\zig\zig.zip'; if ((Get-FileHash 'tools\zig\zig.zip' -Algorithm SHA256).Hash -ne '%ZIG_SHA%') { Remove-Item 'tools\zig\zig.zip'; throw 'SHA-256 of the download does not match' }" || exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -Uri 'https://ziglang.org/download/%ZIG_VER%/%ZIG_NAME%.zip' -OutFile 'tools\zig\zig.zip'; if (([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes('tools\zig\zig.zip'))) -replace '-','') -ne '%ZIG_SHA%') { Remove-Item 'tools\zig\zig.zip'; throw 'SHA-256 of the download does not match' }" || exit /b 1
 tar -xf tools\zig\zig.zip -C tools\zig || exit /b 1
 del tools\zig\zig.zip
 if not exist "tools\zig\%ZIG_NAME%\zig.exe" (echo The Zig archive did not contain %ZIG_NAME%\zig.exe & exit /b 1)
