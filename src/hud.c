@@ -338,6 +338,7 @@ static const struct { const char *en, *tr[4]; } k_port_tr[] = {   /* tr = Polish
     { "Look around:",     { "Rozglądanie:", "Mirar alrededor:", "Olhar ao redor:", "Осмотреться:" } },
     { "Camera behind:",   { "Kamera za postacią:", "Cámara detrás:", "Câmera atrás:", "Камера сзади:" } },
     { "Pause:",           { "Pauza:", "Pausa:", "Pausa:", "Пауза:" } },
+    { "Camera speed:",    { "Szybkość kamery:", "Velocidad de cámara:", "Velocidade da câmera:", "Скорость камеры:" } },
     { "Left stick",       { "Lewa gałka", "Stick izquierdo", "Analógico esquerdo", "Левый стик" } },
     { "Space",            { "Spacja", "Espacio", "Espaço", "Пробел" } },
     { "Left arrow",       { "Strzałka w lewo", "Flecha izquierda", "Seta esquerda", "Стрелка влево" } },

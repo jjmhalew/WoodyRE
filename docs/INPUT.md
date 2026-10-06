@@ -309,7 +309,8 @@ the Mover).
   B/Circle 5 and 8 (and back), X/Square and RT 6, RB 7, Start/Options 9, LB and R3 10, Y/Triangle and LT 11. The right stick
   adds look-around counts (`ftol(value · 5)`, the same weight as the left stick, §6 mouse); outside the look-around it turns
   the follow camera round Woody (x, up to 2.6 rad/s, stick right = the view turns right) and lowers / raises it (y, 400 units/s,
-  -120..+350 on top of the height of message 670, kept until "camera behind"), both as part of the camera's own move in
+  -120..+350 on top of the height of message 670, kept until "camera behind"), both scaled by the Controls page's "Camera
+  speed" (25/50/75/100/150/200 %, `camera_speed=` in woodyre.cfg, default 100) and both as part of the camera's own move in
   `camera_step`, so the sweep and the line-of-sight veto of CAMERA.md still stop it at walls; not in behind mode (climbing,
   rides, races, the behind key). Test hook `WOODY_RSTICK="T:RX:RY[:D] ..."`. While a pad is connected the
   WinMM joystick is not used (it would be the same pad again; Sony devices, `wMid` 0x054c, are skipped anyway).
