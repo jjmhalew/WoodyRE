@@ -66,7 +66,8 @@ and so are the port's own menus (Display, Controls).
 | Pause menu | Esc | Options | Start |
 | Fullscreen / window | F11 | | |
 
-Menus: Enter or Jump confirms, Esc or Duck goes back. Options → Controls changes the keys and pad buttons.
+Menus: Enter or Jump confirms, Esc or Duck goes back. Options → Controls changes the keys and pad buttons, and the camera
+speed of the right stick (25 % to 200 %; a slow camera is gentler if you get motion sick).
 
 Touch screens (Android): the left half of the screen is a stick wherever you put your thumb down (it walks, and moves
 through the menus). On the right are the four pad buttons: A (green, jump / confirm), B (red, duck / back), X (blue,

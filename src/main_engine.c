@@ -483,6 +483,8 @@ static struct { int rev, film, vsync; } g_setup = { -1, -1, -1 };
 static int g_logos = 1;                                 /* woodyre.cfg logos=0: never play the logo films (PORT EXTRA) */
 static char g_bind_cfg[32][100]; static int g_nbind_cfg;   /* woodyre.cfg key_* / pad_* lines (PORT EXTRA): applied by in_read_cfg after Woody.cfg */
 static void ctl_write(FILE *f);
+static int g_cam_speed = 100;                           /* woodyre.cfg camera_speed= (percent): how fast the right stick turns / raises the follow camera (PORT EXTRA, Controls page) */
+static const int k_cam_speeds[] = { 25, 50, 75, 100, 150, 200 };
 static int g_pad_dz = 30;                               /* woodyre.cfg pad_deadzone= (percent): the stick dead zone of the pads (PORT EXTRA), default the original's 30 % (0x467a80) */
 /* ---- display (docs/DISPLAY.md; everything here is a PORT EXTRA). The original runs exclusive fullscreen at the Woody.cfg mode
  * (Detect's list, default 640x480), always 4:3 in the layout, and paces itself only by Flip(DDFLIP_WAIT) = vsync (0x47ee90);
@@ -507,6 +509,7 @@ static void opt_read(void)
         else if (sscanf(line, "reverse_stereo=%d", &v) == 1) g_setup.rev = v != 0; else if (sscanf(line, "film_sound=%d", &v) == 1) g_setup.film = v != 0;
         else if (sscanf(line, "logos=%d", &v) == 1) g_logos = v != 0;
         else if (sscanf(line, "pad_deadzone=%d", &v) == 1) g_pad_dz = v < 0 ? 0 : v > 90 ? 90 : v;
+        else if (sscanf(line, "camera_speed=%d", &v) == 1) g_cam_speed = v < 10 ? 10 : v > 300 ? 300 : v;
         else if ((!strncmp(line, "key_", 4) || !strncmp(line, "pad_", 4)) && strchr(line, '=') && g_nbind_cfg < 32) {
             line[strcspn(line, "\r\n")] = 0; snprintf(g_bind_cfg[g_nbind_cfg++], sizeof g_bind_cfg[0], "%s", line); }
         else if (sscanf(line, "fpscap=%d", &v) == 1) g_disp.cap = v < 0 ? 0 : v > 1000 ? 1000 : v; } fclose(f); }
@@ -517,7 +520,7 @@ static void opt_write(void)
     FILE *f = fopen("woodyre.cfg", "w"); if (!f) return;
     fprintf(f, "sfx=%d\nmusic=%d\nrumble=%d\n", g_opt.sfx, g_opt.music, g_opt.vib);
     fprintf(f, "aspect=%s\nwindow=%dx%d\nfullscreen=%d\nvsync=%d\nfpscap=%d\n", g_disp.wide ? "wide" : "4:3", g_disp.w, g_disp.h, g_disp.full, g_disp.vsync, g_disp.cap);
-    fprintf(f, "reverse_stereo=%d\nfilm_sound=%d\nlogos=%d\npad_deadzone=%d\n", g_setup.rev > 0, g_setup.film != 0, g_logos, g_pad_dz);
+    fprintf(f, "reverse_stereo=%d\nfilm_sound=%d\nlogos=%d\npad_deadzone=%d\ncamera_speed=%d\n", g_setup.rev > 0, g_setup.film != 0, g_logos, g_pad_dz, g_cam_speed);
     ctl_write(f);
     fclose(f);
 }
@@ -782,6 +785,7 @@ static struct {
     int cap, phase; float cap_t; uint32_t pad_prev;              /* cap 1: waiting for the key / button of row M.sel - 2 (phase 0: until all are let go), 2: done, until all are let go */
     int bak[12][4], pbak[12][4], bak_mode, bak_cfg;              /* the bindings when the page opened ("back" puts them back) */
     int last_kind;                                               /* the pad kind seen last, for the button names */
+    int bak_speed;                                               /* g_cam_speed when the page opened */
 } g_ctl;
 static void ctl_apply_cfg(void)                                  /* woodyre.cfg key_<row>=Name,Name / pad_<row>=A,RT over Woody.cfg and the defaults */
 {
@@ -1046,9 +1050,10 @@ static void disp_step(int item, int dir)               /* left / right on a choi
 /* port page 0x41 "Controls" (PORT EXTRA, docs/INPUT.md 6.2): a choice of device, a row per action with its keys or buttons,
  * Defaults and Continue. Confirm on a row waits for a key (or button): one already in the row is taken out, any other is
  * added (and taken out of the other rows); Esc or 6 s without one leaves the row as it was. Changes count at once,
- * Continue saves them to woodyre.cfg, back puts the old ones back. */
-static MenuItem k_page41[15] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100},
-    {0,0x100}, {0,0x100}, {0,0x100}, {0,1}, {4,1} };
+ * Continue saves them to woodyre.cfg, back puts the old ones back. Row 13 = the camera speed of the right stick (left / right
+ * steps through k_cam_speeds; slow is gentler on motion sickness). */
+static MenuItem k_page41[16] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100},
+    {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,1}, {4,1} };
 static void ctl_items(void)
 {
     k_page41[0].id = hud_port_str("Controls");
@@ -1059,7 +1064,9 @@ static void ctl_items(void)
         else if (!b[0]) snprintf(b, sizeof b, "(none)");
         k_page41[2 + r].id = hud_port_str(k_ctl_rows[r].name); k_page41[2 + r].value = (int)hud_port_str_tmp(r, b);
     }
-    k_page41[13].id = hud_port_str("Defaults");
+    char cs[8]; snprintf(cs, sizeof cs, "%d%%", g_cam_speed);
+    k_page41[13].id = hud_port_str("Camera speed:"); k_page41[13].value = (int)hud_port_str_tmp(11, cs);
+    k_page41[14].id = hud_port_str("Defaults");
 }
 static int key_side(int vk) { return vk == VK_LSHIFT || vk == VK_RSHIFT ? VK_SHIFT : vk == VK_LCONTROL || vk == VK_RCONTROL ? VK_CONTROL : vk == VK_LMENU || vk == VK_RMENU ? VK_MENU : vk; }
 static int ctl_same(int dev, int a, int b) { return a == b || (!dev && (key_side(a) == b || key_side(b) == a)); }   /* Shift also matches Left / Right Shift */
@@ -1370,7 +1377,7 @@ static void menu_enter(int page)
     case 0x40: M.disp = g_dnow; disp_items(); M.sel = 1; break;        /* port page: the cursor on the first choice */
     case 0x41: g_ctl.dev = g_in.pad.kind != PADK_NONE; g_ctl.cap = 0;  /* port page: the pads when one is there */
         memcpy(g_ctl.bak, g_in.bind, sizeof g_ctl.bak); memcpy(g_ctl.pbak, g_in.pbind, sizeof g_ctl.pbak); g_ctl.bak_mode = g_in.mode; g_ctl.bak_cfg = g_in.have_cfg;
-        ctl_items(); M.sel = 1; break;
+        g_ctl.bak_speed = g_cam_speed; ctl_items(); M.sel = 1; break;
     case 0x1c: M.sel = 2; break;                                       /* 0x45bd40: on "No" */
     case 0x17: M.sel = 3; break;                                       /* 0x45b370: base enter, then sel = 3 = "No" */
     case 0x18: case 0x19: case 0x1f: M.sel = 0; hud_logo_off(); break; /* 0x45b390 */
@@ -1532,13 +1539,17 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
     case 0x41:                                                         /* port page "Controls": the capture itself runs in ctl_capture */
         if ((k->right || k->left) && M.sel == 1) { g_ctl.dev ^= 1; ctl_items(); hud_menu_blink(0.25f); }
         if (k->ok && M.sel >= 2 && M.sel <= 12) { g_ctl.cap = 1; g_ctl.phase = 0; g_ctl.cap_t = 0; g_ctl.pad_prev = g_in.pad.buttons; ctl_items(); }
-        if (k->ok && M.sel == 13) { ctl_defaults(g_ctl.dev); ctl_items(); hud_menu_blink(0.25f); puts("input: defaults"); }
-        if (k->ok && M.sel == 14) {
+        if ((k->right || k->left) && M.sel == 13) {                    /* camera speed: the next / previous step (a cfg value between steps goes to a neighbour) */
+            int n = (int)(sizeof k_cam_speeds / sizeof *k_cam_speeds), i = 0; while (i < n - 1 && k_cam_speeds[i] < g_cam_speed) i++;
+            if (k->right && k_cam_speeds[i] <= g_cam_speed && i < n - 1) i++; else if (k->left && i > 0) i--;
+            g_cam_speed = k_cam_speeds[i]; ctl_items(); hud_menu_blink(0.25f); }
+        if (k->ok && M.sel == 14) { ctl_defaults(g_ctl.dev); g_cam_speed = 100; ctl_items(); hud_menu_blink(0.25f); puts("input: defaults"); }
+        if (k->ok && M.sel == 15) {
             if (memcmp(g_ctl.bak, g_in.bind, sizeof g_ctl.bak) || memcmp(g_ctl.pbak, g_in.pbind, sizeof g_ctl.pbak)) g_ctl.custom = 1;
             opt_write();
         }
-        if (k->back) { memcpy(g_in.bind, g_ctl.bak, sizeof g_ctl.bak); memcpy(g_in.pbind, g_ctl.pbak, sizeof g_ctl.pbak); g_in.mode = g_ctl.bak_mode; g_in.have_cfg = g_ctl.bak_cfg; }
-        if ((k->ok && M.sel == 14) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
+        if (k->back) { memcpy(g_in.bind, g_ctl.bak, sizeof g_ctl.bak); memcpy(g_in.pbind, g_ctl.pbak, sizeof g_ctl.pbak); g_in.mode = g_ctl.bak_mode; g_in.have_cfg = g_ctl.bak_cfg; g_cam_speed = g_ctl.bak_speed; }
+        if ((k->ok && M.sel == 15) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
         break;
     case 3: if (!M.p.lock) carousel_update(k, dt); break;
     case 4: if (!M.p.lock && k->back) { panel_close(0, 24); panel_iris(0, 0); } break;   /* 0x45bb30 -> 0x45bb40: iris +0x30 = 0 -> 0; confirm is vt[19] = ret */
@@ -4022,8 +4033,8 @@ int main(int argc, char **argv)
                     pin.mouse_dx += (int)(in_deadzone(g_in.pad.rx, g_pad_dz * 0.01f) * 5.0f); pin.mouse_dy += (int)(in_deadzone(g_in.pad.ry, g_pad_dz * 0.01f) * -5.0f); }
                 /* PORT EXTRA: outside the look-around the right stick turns / raises the follow camera (player_camera) */
                 int orbit = g_in.pad.kind != PADK_NONE && !pin.look && !L.player.look;
-                L.player.cam_orbit_x = orbit ? in_deadzone(g_in.pad.rx, g_pad_dz * 0.01f) : 0;
-                L.player.cam_orbit_y = orbit ? in_deadzone(g_in.pad.ry, g_pad_dz * 0.01f) : 0;
+                L.player.cam_orbit_x = orbit ? in_deadzone(g_in.pad.rx, g_pad_dz * 0.01f) * g_cam_speed * 0.01f : 0;   /* scaled by the Camera speed option */
+                L.player.cam_orbit_y = orbit ? in_deadzone(g_in.pad.ry, g_pad_dz * 0.01f) * g_cam_speed * 0.01f : 0;
                 for (const char *e = wenv("WOODY_MOUSE"); e && *e; ) {
                     double t, d = 0.5; int dx, dy, n = 0;
                     if (sscanf(e, "%lf:%d:%d%n", &t, &dx, &dy, &n) < 3) break;
