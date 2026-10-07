@@ -20,7 +20,16 @@
 /* ---- files ----------------------------------------------------------------------------------------------------------- */
 int plat_exists(const char *path) { struct stat st; return stat(path, &st) == 0; }
 
-/* path with every part matched ignoring case against what is on disk; 0 = some part is not there */
+/* a name on disk that stands for want: equal ignoring case, or with one dot more at the end - an ISO 9660 name without an
+ * extension is stored as "CODE.;1", and some tools that unpack the image keep that dot (Windows drops it, so the engine asks
+ * for Data/House/code) */
+static int name_is(const char *disk, const char *want)
+{
+    size_t n = strlen(disk), w = strlen(want);
+    return !strcasecmp(disk, want) || (n == w + 1 && disk[w] == '.' && !strncasecmp(disk, want, w));
+}
+
+/* path with every part matched ignoring case (and an ISO trailing dot) against what is on disk; 0 = some part is not there */
 static int resolve(const char *in, char *out, size_t cap)
 {
     char buf[1024]; size_t n = strlen(in); if (n >= sizeof buf || n + 1 > cap) return 0;
@@ -34,7 +43,7 @@ static int resolve(const char *in, char *out, size_t cap)
         if (!strcmp(p, ".") || !strcmp(p, "..") || plat_exists(test)) { o += (size_t)snprintf(out + o, cap - o, "%s", p); }
         else {
             DIR *d = opendir(o ? out : "."); struct dirent *de; int found = 0;
-            if (d) { while ((de = readdir(d))) if (!strcasecmp(de->d_name, p)) { o += (size_t)snprintf(out + o, cap - o, "%s", de->d_name); found = 1; break; } closedir(d); }
+            if (d) { while ((de = readdir(d))) if (name_is(de->d_name, p)) { o += (size_t)snprintf(out + o, cap - o, "%s", de->d_name); found = 1; break; } closedir(d); }
             if (!found) return 0;
         }
         if (o >= cap - 1) return 0;
