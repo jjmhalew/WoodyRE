@@ -249,10 +249,12 @@ static void show_progress(const char *text)                 /* WoodyActivity.pro
 }
 #else
 /* ---- Switch: sdmc:/switch/woodyre on the SD card (next to woodyre.nro), with the CD files in data/ or an ISO image of the
- * CD that is unpacked into data/ at the first start. The unpacking shows its progress on libnx's text console, which is
- * closed again before the game opens its window. */
+ * CD that is unpacked into data/ at the first start. The unpacking shows its progress on libnx's text console and then
+ * quits; the game plays from the next start on. */
 #include <switch/types.h>
 #include <switch/runtime/devices/console.h>
+#include <switch/runtime/pad.h>                             /* this file does not use pad.h, whose PadState is another */
+#include <switch/services/applet.h>
 #define SWITCH_HOME "sdmc:/switch/woodyre"
 static int home_dir(char *d) { snprintf(d, PMAX, "%s", SWITCH_HOME); return 1; }
 static int g_con;                                           /* the text console is up */
@@ -437,10 +439,14 @@ const char *data_find(void)
         if (fd < 0) { snprintf(m, sizeof m, "Could not open %s", iso); plat_message(m, 1); return NULL; }
         mkdir(p, 0755); show_progress("WoodyRE: unpacking the game files from the ISO image, this happens once ...\n");
         bad = iso_copy(fd, home); close(fd);
-        int ok = bad >= 0 && cd_layout(p);
-        if (ok) show_progress("\nDone. The ISO image is no longer needed and can be deleted.\n");
-        if (g_con) { consoleExit(NULL); g_con = 0; }   /* stdout still leads to the closed console: no printf until main reopens it */
-        return ok ? enter(home, "data/Data") : NULL;
+        /* then quit: the game's OpenGL window does not come up on a screen the text console has used (it hung in Eden),
+         * so the next start, which finds data/ and never opens the console, is the one that plays */
+        show_progress(bad >= 0 && cd_layout(p) ? "\n\nDone. The ISO image is no longer needed and can be deleted.\n\nPress + to exit, then start WoodyRE again.\n"
+                                               : "\n\nThe game files could not be unpacked.\n\nPress + to exit.\n");
+        PadState pad; padConfigureInput(1, HidNpadStyleSet_NpadStandard); padInitializeDefault(&pad);
+        while (appletMainLoop()) { padUpdate(&pad); if (padGetButtonsDown(&pad) & HidNpadButton_Plus) break; consoleUpdate(NULL); }
+        consoleExit(NULL); g_con = 0;
+        return NULL;
     }
     snprintf(m, sizeof m, "WoodyRE needs the files of the original game CD-ROM:\n"
                           "Woody Woodpecker: Escape from Buzz Buzzard Park (PC; the English, Brazilian, Polish, Spanish or Russian CD).\n\n"

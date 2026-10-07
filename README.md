@@ -47,8 +47,8 @@ the touch controls; touching the screen brings them back.
 
 **Nintendo Switch** (experimental; needs a Switch that runs homebrew, i.e. custom firmware such as Atmosphère): put
 `woodyre.nro` from the Releases page (or `./build_switch.sh`) into `/switch/woodyre/` on the SD card. Put an ISO image of
-the CD in the same folder: the first start unpacks it into `/switch/woodyre/data` (a few minutes, once; delete the ISO
-afterwards). Or copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` from the CD into `/switch/woodyre/data` yourself.
+the CD in the same folder: the first start unpacks it into `/switch/woodyre/data` (a few minutes, once), then asks you to
+press + and start WoodyRE again; the ISO can be deleted then. Or copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` from the CD into `/switch/woodyre/data` yourself.
 Start it from the Homebrew Menu, preferably by holding R while starting a game (title takeover; the Album applet has
 less memory). `woodyre.cfg`, `woodyre.sav`, `woodyre.log` and `mods/` live in `/switch/woodyre`. The buttons follow
 their labels: A jumps and confirms, B ducks and goes back, X attacks, Y is the special attack, ZR / ZL as RT / LT. Joy-Cons
