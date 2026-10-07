@@ -51,8 +51,8 @@ the CD in the same folder: the first start unpacks it into `/switch/woodyre/data
 afterwards). Or copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` from the CD into `/switch/woodyre/data` yourself.
 Start it from the Homebrew Menu, preferably by holding R while starting a game (title takeover; the Album applet has
 less memory). `woodyre.cfg`, `woodyre.sav`, `woodyre.log` and `mods/` live in `/switch/woodyre`. The buttons follow
-their labels: A jumps and confirms, B ducks and goes back, X attacks, Y is the special attack, ZR / ZL as RT / LT; the
-handheld's touch screen shows the touch controls once touched.
+their labels: A jumps and confirms, B ducks and goes back, X attacks, Y is the special attack, ZR / ZL as RT / LT. Joy-Cons
+(attached or held as a pair) and the Pro Controller work.
 
 **Supported versions:** the English PC CD-ROM, version 1.00 (October 2001), the Spanish CD (same game data as 1.00), and
 three CDs with the February 2002 data (a few level fixes): the Brazilian Portuguese "Pica-Pau: A Fuga do Parque do Zeca

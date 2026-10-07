@@ -80,7 +80,11 @@ static void open_new(void)
         kind = PADK_SWITCH;                                             /* the Joy-Cons, handheld mode, a Pro Controller */
 #endif
         P.p[slot].c = c; P.p[slot].id = id; P.p[slot].kind = kind; P.p[slot].sent = -1; memset(&P.p[slot].st, 0, sizeof P.p[slot].st);
+#ifdef __SWITCH__
+        if (slot == 0) printf("pad: %s (SDL; every player slot is open, whether a controller is there or not)\n", pad_kind_name(kind));   /* SDL always lists 8 */
+#else
         printf("pad: %s connected (\"%s\", SDL)\n", pad_kind_name(kind), SDL_GameControllerName(c));
+#endif
         if ((kind == PADK_DS4 || kind == PADK_DS5) && !penv("WOODY_PADNOLIGHT")) {               /* Woody red, the middle player light (as pad.c) */
             SDL_GameControllerSetLED(c, 0xd0, 0x10, 0x08); SDL_GameControllerSetPlayerIndex(c, 0);
         }
