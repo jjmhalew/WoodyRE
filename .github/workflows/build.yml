@@ -2,7 +2,7 @@
 # woodyre.nro with build_switch.sh (Switch homebrew) on every push and pull request (no game data involved: the programs
 # hold only the port's own code). A pushed tag v* also publishes a GitHub release with WoodyRE-<tag>.zip (WoodyRE.exe,
 # README.md, LICENSE), WoodyRE-<tag>-linux-x86_64.tar.gz (woodyre, README.md, LICENSE), WoodyRE-<tag>.apk and
-# WoodyRE-<tag>-switch.zip (switch/woodyre/woodyre.nro, to unpack onto the SD card, README.md, LICENSE).
+# WoodyRE-<tag>-switch.zip (switch/woodyre/ with woodyre.nro, README.md, LICENSE: unpacked onto the SD card as is).
 name: build
 
 on:
@@ -120,7 +120,7 @@ jobs:
       - name: Package
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then name="WoodyRE-$GITHUB_REF_NAME"; else name=$(printf 'WoodyRE-%.7s' "$GITHUB_SHA"); fi
-          mkdir -p "pkg/switch/woodyre" && cp woodyre.nro "pkg/switch/woodyre/" && cp README.md LICENSE pkg/
+          mkdir -p pkg/switch/woodyre && cp woodyre.nro README.md LICENSE pkg/switch/woodyre/
           (cd pkg && zip -qr "../$name-switch.zip" .)
           echo "SWZIP=$name-switch.zip" >> "$GITHUB_ENV"
 
