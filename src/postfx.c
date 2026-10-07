@@ -14,21 +14,14 @@
  * fades, the films) is drawn into the window directly and stays sharp. SMAA runs on the GL image as stored, bottom row
  * first: it then smooths the mirror image, which is just as valid - the lookups are indexed by edge shapes, not by screen
  * position, and the textures are uploaded in their own row order.
- * Desktop OpenGL only (framebuffer objects, multisample renderbuffers, GLSL 1.30); the Android and Switch builds draw
- * through the GLES 2 shim of src/gles: everything reports "not supported" there. */
+ * Desktop OpenGL (framebuffer objects, multisample renderbuffers, GLSL 1.30) or OpenGL ES 3.0: the Android and Switch builds
+ * draw through the shim of src/gles (WOODY_GLES), which runs the same passes with the ES shading language (3.00) and also
+ * puts the picture into the own target when only the ambient occlusion is on (gtao.c cannot read the window's depth
+ * there). On an ES 2.0 context everything reports "not supported". */
 #include "postfx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if defined __ANDROID__ || defined __SWITCH__
-void postfx_set(int msaa, int smaa) { (void)msaa; (void)smaa; }
-int  postfx_msaa_max(void) { return 0; }
-int  postfx_smaa_supported(void) { return 0; }
-void postfx_begin(int w, int h) { (void)w; (void)h; }
-void postfx_end(void) { }
-int  postfx_samples(void) { return 0; }
-#else
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -79,6 +72,20 @@ int  postfx_samples(void) { return 0; }
 #define GL_R8 0x8229
 #define GL_RG8 0x822B
 #endif
+#ifndef GL_RGBA8
+#define GL_RGBA8 0x8058
+#endif
+#ifndef GL_RED
+#define GL_RED 0x1903
+#endif
+#ifndef APIENTRY
+#define APIENTRY GL_APIENTRY
+#endif
+#ifdef WOODY_GLES
+#define OWN_DEPTH 1                           /* the depth of the window cannot be read: gtao.c needs the own target */
+#else
+#define OWN_DEPTH 0
+#endif
 
 /* own names (p_*): Mesa's gl.h already declares some of these as functions */
 typedef char GLch;
@@ -91,6 +98,7 @@ static void   (APIENTRY *p_GetShaderInfoLog)(GLuint, GLsizei, GLsizei *, GLch *)
 static void   (APIENTRY *p_DeleteShader)(GLuint);
 static GLuint (APIENTRY *p_CreateProgram)(void);
 static void   (APIENTRY *p_AttachShader)(GLuint, GLuint);
+static void   (APIENTRY *p_BindAttribLocation)(GLuint, GLuint, const GLch *);
 static void   (APIENTRY *p_LinkProgram)(GLuint);
 static void   (APIENTRY *p_GetProgramiv)(GLuint, GLenum, GLint *);
 static void   (APIENTRY *p_GetProgramInfoLog)(GLuint, GLsizei, GLsizei *, GLch *);
@@ -112,7 +120,7 @@ static void   (APIENTRY *p_RenderbufferStorage)(GLenum, GLenum, GLsizei, GLsizei
 static void   (APIENTRY *p_RenderbufferStorageMultisample)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 static void   (APIENTRY *p_BlitFramebuffer)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
 
-static int g_msaa, g_smaa;                    /* the settings */
+static int g_msaa, g_smaa, g_depth;           /* the settings */
 static int g_state;                           /* 0 = not tried yet, 1 = framebuffer objects there, -1 = this GL cannot */
 static int g_msmax;                           /* GL_MAX_SAMPLES (0 = no multisample renderbuffers / blit) */
 static int g_glsl130 = -1;                    /* GLSL 1.30 there (-1 = not asked yet) */
@@ -132,7 +140,7 @@ static int init(void)
     #define GP(v, name) do { void (*f_)(void) = plat_gl_proc(name); memcpy(&v, &f_, sizeof f_); } while (0)
     GP(p_ActiveTexture, "glActiveTexture"); GP(p_CreateShader, "glCreateShader"); GP(p_ShaderSource, "glShaderSource");
     GP(p_CompileShader, "glCompileShader"); GP(p_GetShaderiv, "glGetShaderiv"); GP(p_GetShaderInfoLog, "glGetShaderInfoLog");
-    GP(p_DeleteShader, "glDeleteShader"); GP(p_CreateProgram, "glCreateProgram"); GP(p_AttachShader, "glAttachShader");
+    GP(p_DeleteShader, "glDeleteShader"); GP(p_CreateProgram, "glCreateProgram"); GP(p_AttachShader, "glAttachShader"); GP(p_BindAttribLocation, "glBindAttribLocation");
     GP(p_LinkProgram, "glLinkProgram"); GP(p_GetProgramiv, "glGetProgramiv"); GP(p_GetProgramInfoLog, "glGetProgramInfoLog");
     GP(p_DeleteProgram, "glDeleteProgram"); GP(p_UseProgram, "glUseProgram"); GP(p_GetUniformLocation, "glGetUniformLocation");
     GP(p_Uniform1i, "glUniform1i"); GP(p_Uniform4f, "glUniform4f");
@@ -158,14 +166,21 @@ int postfx_smaa_supported(void)
     if (!ready() || g_smaa_bad) return 0;
     if (g_glsl130 < 0) {
         const char *v = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION); int ma = 0, mi = 0;
-        g_glsl130 = v && sscanf(v, "%d.%d", &ma, &mi) == 2 && (ma > 1 || (ma == 1 && mi >= 30)) && p_CreateShader && p_ShaderSource && p_CompileShader
+#ifdef WOODY_GLES
+        (void)v; (void)ma; (void)mi;              /* ready() = the blit is there = ES 3.0 (the shim): GLSL ES 3.00 */
+        g_glsl130 = p_BindAttribLocation != NULL
+#else
+        g_glsl130 = v && sscanf(v, "%d.%d", &ma, &mi) == 2 && (ma > 1 || (ma == 1 && mi >= 30))
+#endif
+            && p_CreateShader && p_ShaderSource && p_CompileShader
             && p_GetShaderiv && p_GetShaderInfoLog && p_DeleteShader && p_CreateProgram && p_AttachShader && p_LinkProgram && p_GetProgramiv
             && p_GetProgramInfoLog && p_DeleteProgram && p_UseProgram && p_GetUniformLocation && p_Uniform1i && p_Uniform4f;
     }
     return g_glsl130;
 }
-void postfx_set(int msaa, int smaa) { g_msaa = msaa; g_smaa = smaa < 0 ? 0 : smaa > 4 ? 4 : smaa; }
+void postfx_set(int msaa, int smaa, int depth) { g_msaa = msaa; g_smaa = smaa < 0 ? 0 : smaa > 4 ? 4 : smaa; g_depth = depth != 0; }
 int postfx_samples(void) { return g_active ? g_samples : 0; }
+int postfx_size(int *w, int *h) { *w = g_w; *h = g_h; return g_active; }
 
 /* ---- SMAA programs: SMAA.hlsl between a prelude (version, language, preset, which half) and the entry point ---- */
 static GLuint shader(GLenum type, const char *pre, const char *main_)
@@ -178,27 +193,37 @@ static GLuint shader(GLenum type, const char *pre, const char *main_)
 }
 static GLuint program(const char *preset, const char *vs, const char *fs)
 {
-    char pv[512], pf[512];
-    static const char *k_pre = "#version 130\n#define SMAA_GLSL_3\n#define SMAA_PRESET_%s\n#define SMAA_RT_METRICS uMetrics\n"
-                               "#define SMAA_INCLUDE_VS %d\n#define SMAA_INCLUDE_PS %d\nuniform vec4 uMetrics;\n";
-    snprintf(pv, sizeof pv, k_pre, preset, 1, 0); snprintf(pf, sizeof pf, k_pre, preset, 0, 1);
+    char pv[768], pf[768];
+    static const char *k_pre = "%s#define SMAA_GLSL_3\n#define SMAA_PRESET_%s\n#define SMAA_RT_METRICS uMetrics\n"
+                               "#define SMAA_INCLUDE_VS %d\n#define SMAA_INCLUDE_PS %d\nuniform vec4 uMetrics;\n%s";
+#ifdef WOODY_GLES                             /* GLSL ES 3.00: the position from attribute 0 (glBegin of the shim), an own output */
+    static const char *k_ver = "#version 300 es\nprecision highp float;\nprecision highp sampler2D;\n";
+    static const char *k_vs_io = "in vec4 aPos;\n#define POS aPos\n", *k_fs_io = "out vec4 fragOut;\n#define FRAG fragOut\n";
+#else
+    static const char *k_ver = "#version 130\n", *k_vs_io = "#define POS gl_Vertex\n", *k_fs_io = "#define FRAG gl_FragColor\n";
+#endif
+    snprintf(pv, sizeof pv, k_pre, k_ver, preset, 1, 0, k_vs_io); snprintf(pf, sizeof pf, k_pre, k_ver, preset, 0, 1, k_fs_io);
     GLuint v = shader(GL_VERTEX_SHADER, pv, vs), f = v ? shader(GL_FRAGMENT_SHADER, pf, fs) : 0; GLint ok = 0; char log[2048];
     if (!v || !f) { if (v) p_DeleteShader(v); return 0; }
-    GLuint p = p_CreateProgram(); p_AttachShader(p, v); p_AttachShader(p, f); p_LinkProgram(p); p_GetProgramiv(p, GL_LINK_STATUS, &ok);
+    GLuint p = p_CreateProgram(); p_AttachShader(p, v); p_AttachShader(p, f);
+#ifdef WOODY_GLES
+    p_BindAttribLocation(p, 0, "aPos");
+#endif
+    p_LinkProgram(p); p_GetProgramiv(p, GL_LINK_STATUS, &ok);
     p_DeleteShader(v); p_DeleteShader(f);
     if (!ok) { p_GetProgramInfoLog(p, sizeof log, NULL, log); printf("postfx: SMAA link: %s\n", log); p_DeleteProgram(p); return 0; }
     return p;
 }
-#define VS_UV "void fsq() { vUV = gl_Vertex.xy * 0.5 + 0.5; gl_Position = vec4(gl_Vertex.xy, 0.0, 1.0); }\n"
+#define VS_UV "void fsq() { vUV = POS.xy * 0.5 + 0.5; gl_Position = vec4(POS.xy, 0.0, 1.0); }\n"
 static const char *k_vs_edge = "out vec2 vUV; out vec4 vOff[3];\n" VS_UV "void main() { fsq(); SMAAEdgeDetectionVS(vUV, vOff); }\n";
 static const char *k_fs_edge = "uniform sampler2D uColor; in vec2 vUV; in vec4 vOff[3];\n"
-                               "void main() { gl_FragColor = vec4(SMAAColorEdgeDetectionPS(vUV, vOff, uColor), 0.0, 0.0); }\n";
+                               "void main() { FRAG = vec4(SMAAColorEdgeDetectionPS(vUV, vOff, uColor), 0.0, 0.0); }\n";
 static const char *k_vs_weight = "out vec2 vUV; out vec2 vPix; out vec4 vOff[3];\n" VS_UV "void main() { fsq(); SMAABlendingWeightCalculationVS(vUV, vPix, vOff); }\n";
 static const char *k_fs_weight = "uniform sampler2D uEdges, uArea, uSearch; in vec2 vUV; in vec2 vPix; in vec4 vOff[3];\n"
-                                 "void main() { gl_FragColor = SMAABlendingWeightCalculationPS(vUV, vPix, vOff, uEdges, uArea, uSearch, vec4(0.0)); }\n";
+                                 "void main() { FRAG = SMAABlendingWeightCalculationPS(vUV, vPix, vOff, uEdges, uArea, uSearch, vec4(0.0)); }\n";
 static const char *k_vs_blend = "out vec2 vUV; out vec4 vOff;\n" VS_UV "void main() { fsq(); SMAANeighborhoodBlendingVS(vUV, vOff); }\n";
 static const char *k_fs_blend = "uniform sampler2D uColor, uBlend; in vec2 vUV; in vec4 vOff;\n"
-                                "void main() { gl_FragColor = vec4(SMAANeighborhoodBlendingPS(vUV, vOff, uColor, uBlend).rgb, 1.0); }\n";
+                                "void main() { FRAG = vec4(SMAANeighborhoodBlendingPS(vUV, vOff, uColor, uBlend).rgb, 1.0); }\n";
 
 static void tex_params(GLenum filter)
 {
@@ -284,10 +309,11 @@ static int targets(int w, int h, int ms, int smaa)
 void postfx_begin(int w, int h)
 {
     g_active = 0;
-    if ((!g_msaa && !g_smaa) || w <= 0 || h <= 0 || !ready()) return;
+    int own = g_depth && OWN_DEPTH;
+    if ((!g_msaa && !g_smaa && !own) || w <= 0 || h <= 0 || !ready()) return;
     int ms = g_msaa > g_msmax ? g_msmax : g_msaa, smaa = g_smaa && postfx_smaa_supported();
     if (ms < 2) ms = 0;
-    if ((!ms && !smaa) || !targets(w, h, ms, smaa)) return;
+    if ((!ms && !smaa && !own) || !targets(w, h, ms, smaa)) return;
     p_BindFramebuffer(GL_FRAMEBUFFER, ms ? fb_ms : fb_col);
     g_active = 1; g_samples = ms;
 }
@@ -339,4 +365,3 @@ void postfx_end(void)
     p_ActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, 0); p_ActiveTexture(GL_TEXTURE0);
     glPopAttrib();
 }
-#endif

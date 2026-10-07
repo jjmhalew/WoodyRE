@@ -172,8 +172,9 @@ choice, Continue applies at once without touching the window and saves, back dro
 | 5 | Continue | | |
 
 A choice the GL cannot do shows **"Not supported"** (and the lists stop at what the driver offers). The Android and
-Switch builds draw through the GLES 2 shim of `src/gles`: there only texture sharpness can work (when the driver has
-`GL_EXT_texture_filter_anisotropic`). Everything after the 3D picture - HUD, menus, text, fades, films - is drawn into
+Switch builds draw through the shim of `src/gles` (`WOODY_GLES`) and have all four on **OpenGL ES 3.0** and later (the
+same passes in the ES shading language, see below); on an ES 2.0 context only texture sharpness can work (when the
+driver has `GL_EXT_texture_filter_anisotropic`). Everything after the 3D picture - HUD, menus, text, fades, films - is drawn into
 the window directly and is never smoothed or darkened.
 
 - **Ambient occlusion** (`gtao.c`; the original has nothing like it, its world light is the baked `.lit` polygons,
@@ -198,6 +199,16 @@ the window directly and is never smoothed or darkened.
   the AreaTex / SearchTex lookups (embedded as PNG, decoded with stb_image), neighbourhood blending into the window; the
   presets are SMAA's own (Low / Medium / High / Ultra). It also smooths the cut-outs, and runs after the MSAA resolve when
   both are on. SMAA needs GLSL 1.30, MSAA framebuffer objects with multisample renderbuffers (GL 3.0).
+- **OpenGL ES** (Android, Switch; `GLES=1 ./build.sh` builds the same path for a Linux PC): the shim hands the passes the
+  ES 2.0 / 3.0 entry points through `plat_gl_proc` (`glBlitFramebuffer` / `glRenderbufferStorageMultisample` only on a
+  3.0 context, so ES 2.0 reports "Not supported"), lets them bind their own program (`glUseProgram`; `glBegin` then
+  only feeds attribute 0, `aPos`) and emulates `glPushAttrib` / `glPopAttrib` for the state they change (caps, viewport,
+  blend, masks, clear colour, units 0..2, program). The shaders get an ES header: GLSL ES 1.00 for GTAO, 3.00 for SMAA,
+  both with `precision highp sampler2D` (a lowp sampler returns the depth in 8-bit steps: bands across the floor). ES
+  cannot copy the window's depth, so with ambient occlusion on `postfx_begin` draws the picture into its own target even
+  without smoothing, and `gtao_frame` blits the whole depth / stencil of that target into a texture of its size (a
+  multisampled blit must keep the rectangle) and finds the viewport in it (`uDMap`). Checked against the desktop path
+  on the same Mesa (llvmpipe): the effect of each option differs by < 0.02 per pixel, also with a 4:3 pillarbox.
 - **Cost** (RX 6800, 1920x1080, vsync off; the engine is CPU bound, so most of it hides behind the CPU): W1A 1.54 ms per
   frame with everything off, 1.61 with ambient occlusion, 1.57 with SMAA High or MSAA 4x, 1.90 with everything at
   maximum; WWS 0.81 / 1.27 / 0.81 / 1.62 ms.

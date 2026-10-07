@@ -11,5 +11,8 @@ SRC="src/level.c src/render_gl.c src/main_engine.c src/player.c src/instance.c s
      src/plat_sdl.c src/pad_sdl.c src/datasetup_posix.c src/touch.c"
 echo "Building $OUT ..."
 # shellcheck disable=SC2086
-$CC -std=gnu99 -O2 -D_FILE_OFFSET_BITS=64 -Wno-format-truncation -o "$OUT" $SRC $(sdl2-config --cflags) $(sdl2-config --libs) -lGL -lm
+GL="-lGL"
+# GLES=1 ./build.sh: draw through OpenGL ES 3.0 / 2.0 like the Android and Switch builds (src/gles), to test that path on a PC
+if [ "$GLES" = 1 ]; then SRC="$SRC src/gles/gles2.c"; GL="-Isrc/gles -lGLESv2"; fi
+$CC -std=gnu99 -O2 -D_FILE_OFFSET_BITS=64 -Wno-format-truncation -o "$OUT" $SRC $(sdl2-config --cflags) $(sdl2-config --libs) $GL -lm
 echo "Done: $OUT"

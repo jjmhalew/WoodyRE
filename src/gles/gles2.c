@@ -139,6 +139,12 @@ static const char *k_fs =
     "  gl_FragColor = c;\n"
     "}\n";
 static GLuint g_prog; static GLint u_mvp, u_tex, u_env; static int g_es3 = -1;
+static GLuint g_user;                                      /* glUseProgram of gtao.c / postfx.c (0 = the shim's own) */
+static int es3(void)
+{
+    if (g_es3 < 0) { const char *v = (const char *)glGetString(GL_VERSION); g_es3 = v && strstr(v, "OpenGL ES ") && v[10] >= '3'; }
+    return g_es3;
+}
 
 static GLuint shader(GLenum type, const char *src)
 {
@@ -158,8 +164,7 @@ static void prog_init(void)
     glUseProgram(p);
     glUniform1i(glGetUniformLocation(p, "u_t0"), 0); glUniform1i(glGetUniformLocation(p, "u_t1"), 1);
     u_mvp = glGetUniformLocation(p, "u_mvp"); u_tex = glGetUniformLocation(p, "u_tex"); u_env = glGetUniformLocation(p, "u_env");
-    g_prog = p;
-    const char *v = (const char *)glGetString(GL_VERSION); g_es3 = v && strstr(v, "OpenGL ES ") && v[10] >= '3';
+    g_prog = p; es3();
 }
 static float env_code(GLint e) { return e == GL_REPLACE ? 1.0f : e == GL_ADD ? 2.0f : e == GL_DECAL ? 3.0f : 0.0f; }
 static float afunc_code(void)
@@ -171,11 +176,13 @@ static float afunc_code(void)
 static void flush(const Arr *arr)                          /* the state of the next draw */
 {
     mat_init();
-    if (!g_prog) prog_init();
-    glUseProgram(g_prog);
-    float mvp[16]; mul(mvp, g_m[1][g_sp[1]], g_m[0][g_sp[0]]); glUniformMatrix4fv(u_mvp, 1, GL_FALSE, mvp);
-    glUniform4f(u_tex, S.tex[0] ? 1.0f : 0.0f, S.tex[1] ? 1.0f : 0.0f, S.env[0] == GL_COMBINE ? S.scale[0] : 1.0f, S.env[1] == GL_COMBINE ? S.scale[1] : 1.0f);
-    glUniform4f(u_env, env_code(S.env[0]), env_code(S.env[1]), afunc_code(), S.aref);
+    if (!g_prog) { prog_init(); if (g_user) glUseProgram(g_user); }
+    if (!g_user) {                                         /* an own program: only the arrays (the positions = attribute 0) */
+        glUseProgram(g_prog);
+        float mvp[16]; mul(mvp, g_m[1][g_sp[1]], g_m[0][g_sp[0]]); glUniformMatrix4fv(u_mvp, 1, GL_FALSE, mvp);
+        glUniform4f(u_tex, S.tex[0] ? 1.0f : 0.0f, S.tex[1] ? 1.0f : 0.0f, S.env[0] == GL_COMBINE ? S.scale[0] : 1.0f, S.env[1] == GL_COMBINE ? S.scale[1] : 1.0f);
+        glUniform4f(u_env, env_code(S.env[0]), env_code(S.env[1]), afunc_code(), S.aref);
+    }
     for (int a = 0; a < A_N; a++) {
         if (arr[a].on && arr[a].p) {
             glEnableVertexAttribArray((GLuint)a);
@@ -267,10 +274,65 @@ void gles_read_pixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLe
     for (size_t i = 0; i < (size_t)w * h; i++) { o[i * 3] = t[i * 4]; o[i * 3 + 1] = t[i * 4 + 1]; o[i * 3 + 2] = t[i * 4 + 2]; }
     free(t);
 }
+
+/* ---- the shader passes of gtao.c / postfx.c (ES 3.0) ---------------------------------------------------------------- */
+void gles_use_program(GLuint p) { g_user = p; glUseProgram(p ? p : g_prog); }
+
+/* glPushAttrib / glPopAttrib (any mask = all of it): the fixed-function state above plus the GL state those passes change */
+#define ADEPTH 4
+static struct {
+    unsigned char s[sizeof S]; GLuint user;
+    GLboolean dmask, cmask[4]; GLfloat clear[4]; GLint tex[3];
+} g_attr[ADEPTH]; static int g_asp;
+void gles_push_attrib(GLbitfield mask)
+{
+    (void)mask;
+    if (g_asp == ADEPTH) { printf("gles: glPushAttrib stack full\n"); return; }
+    __typeof__(g_attr[0]) *a = &g_attr[g_asp++];
+    memcpy(a->s, &S, sizeof S); a->user = g_user;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &a->dmask); glGetBooleanv(GL_COLOR_WRITEMASK, a->cmask); glGetFloatv(GL_COLOR_CLEAR_VALUE, a->clear);
+    for (int u = 0; u < 3; u++) { glActiveTexture(GL_TEXTURE0 + u); glGetIntegerv(GL_TEXTURE_BINDING_2D, &a->tex[u]); }
+    glActiveTexture(S.active);
+}
+void gles_pop_attrib(void)
+{
+    if (!g_asp) return;
+    __typeof__(g_attr[0]) *a = &g_attr[--g_asp];
+    __typeof__(S) o; memcpy(&o, a->s, sizeof S);
+    for (int i = 0; i < S.ncaps; i++) {                    /* the caps back (one first touched meanwhile: its default) */
+        GLenum cap = S.caps[i].cap; GLboolean was = cap == GL_DITHER;
+        for (int k = 0; k < o.ncaps; k++) if (o.caps[k].cap == cap) was = o.caps[k].on;
+        if (S.caps[i].on != was && !ff_cap(cap)) { if (was) glEnable(cap); else glDisable(cap); }
+    }
+    S = o;
+    if (S.have_vp) glViewport(S.vp[0], S.vp[1], S.vp[2], S.vp[3]);
+    glBlendFunc((GLenum)S.blend[0], (GLenum)S.blend[1]);
+    glDepthMask(a->dmask); glColorMask(a->cmask[0], a->cmask[1], a->cmask[2], a->cmask[3]); glClearColor(a->clear[0], a->clear[1], a->clear[2], a->clear[3]);
+    for (int u = 0; u < 3; u++) { glActiveTexture(GL_TEXTURE0 + u); glBindTexture(GL_TEXTURE_2D, (GLuint)a->tex[u]); }
+    glActiveTexture(S.active);
+    gles_use_program(a->user);
+}
+
+#ifndef GL_ES_VERSION_3_0                                  /* the two ES 3.0 calls the passes need (GLESv3 / Mesa's GLESv2) */
+GL_APICALL void GL_APIENTRY glBlitFramebuffer(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
+GL_APICALL void GL_APIENTRY glRenderbufferStorageMultisample(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+#endif
 void (*gles_proc(const char *name))(void)
 {
     if (!strcmp(name, "glActiveTexture") || !strcmp(name, "glActiveTextureARB")) return (void (*)(void))gles_active_texture;
     if (!strcmp(name, "glMultiTexCoord2f") || !strcmp(name, "glMultiTexCoord2fARB")) return (void (*)(void))gles_multitexcoord2f;
     if (!strcmp(name, "glClientActiveTexture") || !strcmp(name, "glClientActiveTextureARB")) return (void (*)(void))gles_client_active_texture;
+    if (!strcmp(name, "glUseProgram")) return (void (*)(void))gles_use_program;
+    #define P(f) { #f, (void (*)(void))f }
+    static const struct { const char *name; void (*f)(void); } k_es2[] = {
+        P(glCreateShader), P(glShaderSource), P(glCompileShader), P(glGetShaderiv), P(glGetShaderInfoLog), P(glDeleteShader),
+        P(glCreateProgram), P(glAttachShader), P(glBindAttribLocation), P(glLinkProgram), P(glGetProgramiv), P(glGetProgramInfoLog),
+        P(glDeleteProgram), P(glGetUniformLocation), P(glUniform1i), P(glUniform1f), P(glUniform2f), P(glUniform3f), P(glUniform4f),
+        P(glGenFramebuffers), P(glDeleteFramebuffers), P(glBindFramebuffer), P(glFramebufferTexture2D), P(glFramebufferRenderbuffer),
+        P(glCheckFramebufferStatus), P(glGenRenderbuffers), P(glDeleteRenderbuffers), P(glBindRenderbuffer), P(glRenderbufferStorage) },
+    k_es3[] = { P(glBlitFramebuffer), P(glRenderbufferStorageMultisample) };
+    #undef P
+    for (size_t i = 0; i < sizeof k_es2 / sizeof *k_es2; i++) if (!strcmp(name, k_es2[i].name)) return k_es2[i].f;
+    if (es3()) for (size_t i = 0; i < sizeof k_es3 / sizeof *k_es3; i++) if (!strcmp(name, k_es3[i].name)) return k_es3[i].f;
     return NULL;
 }

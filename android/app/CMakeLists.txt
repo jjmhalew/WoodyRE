@@ -23,4 +23,4 @@ target_compile_definitions(main PRIVATE WOODY_GUI)                  # the releas
 # char is unsigned on ARM; the engine is written for x86, where it is signed
 target_compile_options(main PRIVATE -std=gnu99 -O2 -fsigned-char -Wno-format-truncation)
 set_source_files_properties(${S}/main_engine.c PROPERTIES COMPILE_DEFINITIONS main=SDL_main)   # SDLActivity calls SDL_main
-target_link_libraries(main PRIVATE SDL2::SDL2 GLESv2 log android m)
+target_link_libraries(main PRIVATE SDL2::SDL2 GLESv2 GLESv3 log android m)   # GLESv3: the blit / multisample calls of the Graphics page (gles2.c)

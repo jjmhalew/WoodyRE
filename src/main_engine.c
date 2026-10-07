@@ -552,7 +552,7 @@ static void disp_apply(Window *w)
 }
 static void gfx_apply(void)                             /* the Graphics page's settings (all port extras); cheap, no window change */
 {
-    gtao_enable(g_dnow.ao); rnd_set_aniso(g_dnow.aniso); postfx_set(g_dnow.msaa, g_dnow.smaa);
+    gtao_enable(g_dnow.ao); rnd_set_aniso(g_dnow.aniso); postfx_set(g_dnow.msaa, g_dnow.smaa, g_dnow.ao);
     printf("graphics: ambient occlusion %s, texture sharpness %dx, SMAA %d, MSAA %dx\n", g_dnow.ao ? "on" : "off", g_dnow.aniso, g_dnow.smaa, g_dnow.msaa);
 }
 

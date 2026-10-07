@@ -72,7 +72,7 @@ int plat_vsc_to_vk(int sc)            /* MapVirtualKey(sc, MAPVK_VSC_TO_VK) of a
         VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD0, VK_DECIMAL, 0, 0, VK_OEM_102, VK_F11, VK_F12 };
     return sc > 0 && sc < 0x59 ? T[sc] : 0;
 }
-#if defined __ANDROID__ || defined __SWITCH__
+#ifdef WOODY_GLES                                                   /* the shim of src/gles (Android, Switch) */
 void (*plat_gl_proc(const char *name))(void) { return gles_proc(name); }   /* eglGetProcAddress may hand out stubs for any name */
 #else
 void (*plat_gl_proc(const char *name))(void) { return (void (*)(void))SDL_GL_GetProcAddress(name); }
@@ -196,7 +196,7 @@ int win_open(Window *w, const char *title, int width, int height)
     flags |= SDL_WINDOW_FULLSCREEN; width = 1280; height = 720;        /* the whole screen; SDL follows docked / handheld */
 #endif
     if (SDL_InitSubSystem(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return -1; }
-#if defined __ANDROID__ || defined __SWITCH__
+#ifdef WOODY_GLES
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);

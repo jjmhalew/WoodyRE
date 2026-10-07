@@ -118,7 +118,8 @@ or `pip install ziglang` is used when present, otherwise `build.bat` downloads t
 
 - Linux: `./build.sh` builds `woodyre` with the system's C compiler and SDL2 (Debian / Ubuntu:
   `sudo apt install build-essential libsdl2-dev`). The engine is the same; only the window, input, sound, pads
-  (`src/plat_sdl.c`, `src/pad_sdl.c`) and the first-start copy (`src/datasetup_posix.c`) are SDL / POSIX code.
+  (`src/plat_sdl.c`, `src/pad_sdl.c`) and the first-start copy (`src/datasetup_posix.c`) are SDL / POSIX code. `GLES=1 ./build.sh`
+  draws through OpenGL ES like the Android and Switch builds (`src/gles/`), to test that path on a PC.
 - Android: `cd android` then `gradlew assembleRelease` (or `assembleDebug`) builds the APK in
   `android/app/build/outputs/apk/`. It needs the Android SDK with NDK 27.2 and CMake 3.22 (Android Studio's SDK Manager
   installs both; Android Studio can also open the `android` folder directly). The build downloads SDL 2.32.10 and checks
