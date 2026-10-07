@@ -45,6 +45,15 @@ copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` there with a USB cable. `wo
 and `mods/` live in `Android/data/io.github.jjmhalew.woodyre/files`. A Bluetooth or USB pad works like on Linux and hides
 the touch controls; touching the screen brings them back.
 
+**Nintendo Switch** (experimental; needs a Switch that runs homebrew, i.e. custom firmware such as Atmosphère): put
+`woodyre.nro` from the Releases page (or `./build_switch.sh`) into `/switch/woodyre/` on the SD card. Put an ISO image of
+the CD in the same folder: the first start unpacks it into `/switch/woodyre/data` (a few minutes, once; delete the ISO
+afterwards). Or copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` from the CD into `/switch/woodyre/data` yourself.
+Start it from the Homebrew Menu, preferably by holding R while starting a game (title takeover; the Album applet has
+less memory). `woodyre.cfg`, `woodyre.sav`, `woodyre.log` and `mods/` live in `/switch/woodyre`. The buttons follow
+their labels: A jumps and confirms, B ducks and goes back, X attacks, Y is the special attack, ZR / ZL as RT / LT; the
+handheld's touch screen shows the touch controls once touched.
+
 **Supported versions:** the English PC CD-ROM, version 1.00 (October 2001), the Spanish CD (same game data as 1.00), and
 three CDs with the February 2002 data (a few level fixes): the Brazilian Portuguese "Pica-Pau: A Fuga do Parque do Zeca
 Urubu!", the Polish "Wielka Draka w Parku Buzza Buzzarda" and the Russian release by 1C. The game is in the CD's language,
@@ -114,6 +123,10 @@ or `pip install ziglang` is used when present, otherwise `build.bat` downloads t
   its SHA-256. The engine is the same as on Linux; OpenGL ES stands in for desktop OpenGL through `src/gles/`, the touch
   controls are `src/touch.c`. Without your own signing key (`-PwoodyKeystore=... -PwoodyKeyAlias=... -PwoodyKeyPassword=...`)
   the release APK is signed with the debug key, which is fine for installing it yourself.
+- Nintendo Switch: `./build_switch.sh` builds `woodyre.nro` with devkitPro's devkitA64, libnx, switch-sdl2 and
+  switch-mesa. Without `$DEVKITPRO` set it builds in the official `devkitpro/devkita64` Docker image instead. The same SDL
+  code as on Linux and Android, on OpenGL ES through `src/gles/`; the `__SWITCH__` parts are the data folder on the SD
+  card (`src/datasetup_posix.c`) and the system's error dialog for messages (`src/plat_sdl.c`).
 - `build.bat dev`: the developer build `out\woody.exe`, which logs to the console and keeps the developer keys
   (F1-F5, Tab, `[ ]`, P, PgUp/PgDn, End; in `WoodyRE.exe` they need `WOODY_DEBUGKEYS=1`).
 - `make_standalone.bat`: packs `WoodyRE.exe` and **your** game files from `data\` into a single

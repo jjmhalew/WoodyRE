@@ -771,7 +771,9 @@ static const char *pad_btn_name(int b, int kind)                 /* b = PAD_*; t
     static const char *const sony[PAD_NBUTTONS] = { "Cross", "Circle", "Square", "Triangle", "L1", "R1", "L2", "R2", "Create", "Options", "L3", "R3", "Up", "Down", "Left", "Right", "PS", "Touchpad" };
     static const char *const dpad[4] = { "Dpad Up", "Dpad Down", "Dpad Left", "Dpad Right" };   /* no "-" in the font */
     if (b >= PAD_UP && b <= PAD_RIGHT) return dpad[b - PAD_UP];
+    static const char *const nintendo[PAD_NBUTTONS] = { "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "Minus", "Plus", "LS", "RS", "Up", "Down", "Left", "Right", "Home", "Touchpad" };
     if (kind == PADK_DS4 && b == PAD_BACK) return "Share";
+    if (kind == PADK_SWITCH) return nintendo[b];
     return kind == PADK_DS4 || kind == PADK_DS5 ? sony[b] : k_pad_cfg[b];
 }
 /* the rows of the Controls page; Duck also sets action 8 (duck while riding), which the original binds on its own */
@@ -3775,7 +3777,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e)
 #endif
     return EXCEPTION_CONTINUE_SEARCH;
 }
-#elif !defined __ANDROID__                                        /* Android keeps its own handlers (the tombstone in logcat) */
+#elif !defined __ANDROID__ && !defined __SWITCH__                 /* Android keeps its own handlers (the tombstone in logcat) */
 #include <signal.h>
 static void crash_signal(int sig) { printf("crash: signal %d\n", sig); fflush(stdout); signal(sig, SIG_DFL); raise(sig); }
 #endif
@@ -3784,7 +3786,7 @@ int main(int argc, char **argv)
 {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crash_filter);
-#elif !defined __ANDROID__
+#elif !defined __ANDROID__ && !defined __SWITCH__
     signal(SIGSEGV, crash_signal); signal(SIGBUS, crash_signal); signal(SIGFPE, crash_signal); signal(SIGILL, crash_signal); signal(SIGABRT, crash_signal);
 #endif
     if (wenv("WOODY_UNBUF")) setvbuf(stdout, NULL, _IONBF, 0);                  /* debugging a crash: every line reaches the log */

@@ -10,7 +10,7 @@
  * BACK = Share / Create, START = Options, LS/RS = L3/R3, GUIDE = PS, TOUCH = the touchpad click */
 enum { PAD_A, PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LT, PAD_RT, PAD_BACK, PAD_START, PAD_LS, PAD_RS,
        PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_GUIDE, PAD_TOUCH, PAD_NBUTTONS };
-enum { PADK_NONE, PADK_XBOX, PADK_DS4, PADK_DS5 };
+enum { PADK_NONE, PADK_XBOX, PADK_DS4, PADK_DS5, PADK_SWITCH };   /* PADK_SWITCH: SDL builds only, by its labels (A = the right button) */
 
 typedef struct {
     int kind;                    /* PADK_*: the pad that was used last; PADK_NONE while none is connected */

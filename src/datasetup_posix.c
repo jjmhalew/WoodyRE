@@ -4,7 +4,9 @@
  * looks for the CD (or a mounted ISO image) under /media, /run/media and /mnt, asks, and copies the 232 files of the
  * manifest (src/datafiles.h) into ~/.local/share/WoodyRE/data with their SHA-1 checked. The folder that holds data/ becomes
  * the current directory, so woodyre.cfg, woodyre.sav and mods/ live beside it. Names on the disc are matched ignoring case.
- * Android has its own data_find and folder (below): the app's folder, filled from an ISO image or a folder the user picks. */
+ * Android has its own data_find and folder (below): the app's folder, filled from an ISO image or a folder the user picks.
+ * So has the Switch: sdmc:/switch/woodyre on the SD card, with the CD files copied into data/ or an ISO image of the CD
+ * that is unpacked into data/ at the first start. */
 #ifndef _WIN32
 #include "datasetup.h"
 #include "datafiles.h"
@@ -63,7 +65,7 @@ static int cd_layout(const char *root)
     for (int i = 0; i < 3; i++) { snprintf(p, sizeof p, "%s/%s", root, probe[i]); if (!readable(p)) return 0; }
     return 1;
 }
-#ifndef __ANDROID__
+#if !defined __ANDROID__ && !defined __SWITCH__
 static void exe_dir(char *d)
 {
     ssize_t n = readlink("/proc/self/exe", d, PMAX - 1);
@@ -83,6 +85,7 @@ static void make_dirs(char *path)                           /* every parent dire
     for (char *p = path + 1; *p; p++) if (*p == '/') { *p = 0; mkdir(path, 0755); *p = '/'; }
 }
 static const char *enter(const char *home, const char *rel) { return chdir(home) ? NULL : rel; }
+#ifndef __SWITCH__
 static int ask(const char *text, const char *yes, const char *no)   /* 1 = yes, 0 = no, -1 = cancel */
 {
 #ifdef __ANDROID__
@@ -93,6 +96,7 @@ static int ask(const char *text, const char *yes, const char *no)   /* 1 = yes, 
     int r = -1; if (SDL_ShowMessageBox(&m, &r)) { fprintf(stderr, "%s\n", text); return -1; }
     return r;
 }
+#endif
 
 static int g_fit[DATAFILES_RELEASES];   /* per supported release: how many files of the last copy/check were its copy (datafile_tally) */
 /* reads one manifest file under src_root, writes it under dst_root when that is set (as name.part, renamed at the end) and
@@ -119,7 +123,7 @@ static int file_pass(const char *src_root, const char *dst_root, int i, unsigned
     if (d) { if (fclose(d) || ok < 0 || rename(tp, dp)) { remove(tp); return -1; } }
     return ok;
 }
-#ifndef __ANDROID__
+#if !defined __ANDROID__ && !defined __SWITCH__
 static int copy_cd(const char *src, const char *home)       /* the number of files that differ from the 1.00 CD, -1 = failed */
 {
     char dst[PMAX], m[PMAX + 400]; snprintf(dst, sizeof dst, "%s/data", home); mkdir(dst, 0755);
@@ -207,10 +211,11 @@ const char *data_find(void)
     }
 }
 #else
+#include <fcntl.h>
+#ifdef __ANDROID__
 /* ---- Android: the app's own folder on the shared storage (Android/data/<package>/files: a USB cable reaches it, no
  * permission needed), filled once from an ISO image of the CD or a folder with a copy of it that the user picks in the
  * system's file picker (WoodyActivity.java); an ISO is read here, through the file descriptor the picker hands out. */
-#include <fcntl.h>
 #include <jni.h>
 
 static int home_dir(char *d)
@@ -232,7 +237,7 @@ static int java_pick(int kind, const char *dest)
     (*env)->DeleteLocalRef(env, c); (*env)->DeleteLocalRef(env, act);
     return r;
 }
-static void java_progress(const char *text)                 /* WoodyActivity.progress: a dialog with this text, NULL closes it */
+static void show_progress(const char *text)                 /* WoodyActivity.progress: a dialog with this text, NULL closes it */
 {
     JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv(); jobject act = (jobject)SDL_AndroidGetActivity();
     if (!env || !act) return;
@@ -242,11 +247,27 @@ static void java_progress(const char *text)                 /* WoodyActivity.pro
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     (*env)->DeleteLocalRef(env, c); (*env)->DeleteLocalRef(env, act);
 }
+#else
+/* ---- Switch: sdmc:/switch/woodyre on the SD card (next to woodyre.nro), with the CD files in data/ or an ISO image of the
+ * CD that is unpacked into data/ at the first start. The unpacking shows its progress on libnx's text console, which is
+ * closed again before the game opens its window. */
+#include <switch/types.h>
+#include <switch/runtime/devices/console.h>
+#define SWITCH_HOME "sdmc:/switch/woodyre"
+static int home_dir(char *d) { snprintf(d, PMAX, "%s", SWITCH_HOME); return 1; }
+static int g_con;                                           /* the text console is up */
+static void show_progress(const char *text)
+{
+    if (!text) return;
+    if (!g_con) { consoleInit(NULL); g_con = 1; }
+    printf("\r%s   ", text); fflush(stdout); consoleUpdate(NULL);
+}
+#endif
 static void progress_pct(const char *what, unsigned long long done, int *last)
 {
     int pct = (int)(done * 100 / DATAFILES_BYTES); char m[128];
     if (pct == *last) return;
-    *last = pct; snprintf(m, sizeof m, "%s %d %%", what, pct); java_progress(m);
+    *last = pct; snprintf(m, sizeof m, "%s %d %%", what, pct); show_progress(m);
 }
 
 /* ---- ISO 9660 (ECMA-119) with the Joliet names when there are some: just enough to find the manifest's files ---- */
@@ -254,7 +275,12 @@ typedef struct { int fd; uint32_t root_lba, root_len; int joliet; } Iso;
 static uint32_t le32(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static int iso_pread(int fd, void *b, size_t n, unsigned long long off)
 {
+#ifdef __SWITCH__                                           /* libnx has no pread */
+    if (lseek(fd, (off_t)off, SEEK_SET) < 0) return -1;
+    for (size_t got = 0; got < n; ) { ssize_t k = read(fd, (char *)b + got, n - got); if (k <= 0) return -1; got += (size_t)k; }
+#else
     for (size_t got = 0; got < n; ) { ssize_t k = pread(fd, (char *)b + got, n - got, (off_t)(off + got)); if (k <= 0) return -1; got += (size_t)k; }
+#endif
     return 0;
 }
 static int iso_open(Iso *is, int fd)
@@ -316,7 +342,7 @@ static int iso_copy(int fd, const char *home)               /* the number of fil
     for (int i = 0; i < DATAFILES_COUNT; i++) {
         char dp[PMAX], tp[PMAX + 8]; uint32_t lba, len; int ok = 1;
         if (iso_find(&is, k_datafiles[i].path, &lba, &len) && datafile_absent(i, g_fit)) continue;
-        if (iso_find(&is, k_datafiles[i].path, &lba, &len)) { snprintf(m, sizeof m, "The ISO image has no %s.", k_datafiles[i].path); java_progress(NULL); plat_message(m, 1); free(buf); return -1; }
+        if (iso_find(&is, k_datafiles[i].path, &lba, &len)) { snprintf(m, sizeof m, "The ISO image has no %s.", k_datafiles[i].path); show_progress(NULL); plat_message(m, 1); free(buf); return -1; }
         snprintf(dp, sizeof dp, "%s/%s", dst, k_datafiles[i].path); make_dirs(dp); snprintf(tp, sizeof tp, "%s.part", dp);
         FILE *d = fopen(tp, "wb"); if (!d) ok = -1;
         Sha1 h; sha1_init(&h);
@@ -327,14 +353,14 @@ static int iso_copy(int fd, const char *home)               /* the number of fil
         }
         if (d && fclose(d)) ok = -1;
         if (ok < 0 || rename(tp, dp)) {
-            remove(tp); java_progress(NULL);
+            remove(tp); show_progress(NULL);
             snprintf(m, sizeof m, "Could not copy %s from the ISO image to\n%s/\n\nIs there room on the device?", k_datafiles[i].path, dst);
             plat_message(m, 1); free(buf); return -1;
         }
         char hex[41]; sha1_hex(&h, hex);
         if (!datafile_tally(i, len, hex, g_fit)) { bad++; if (first_bad < 0) first_bad = i; printf("data: %s matches none of the supported CDs\n", k_datafiles[i].path); }
     }
-    free(buf); java_progress(NULL);
+    free(buf); show_progress(NULL);
     printf("data: the %s CD\n", k_releases[datafile_best(g_fit)]);
     if (bad) {
         snprintf(m, sizeof m, "%d of the copied files match none of the supported CDs (the first: %s).\n\n"
@@ -343,6 +369,7 @@ static int iso_copy(int fd, const char *home)               /* the number of fil
     }
     return bad;
 }
+#ifdef __ANDROID__
 static void check_copy(const char *home)                     /* after the Java side copied a folder: compare it with the manifest */
 {
     char root[PMAX], m[PMAX + 300]; snprintf(root, sizeof root, "%s/data", home);
@@ -352,7 +379,7 @@ static void check_copy(const char *home)                     /* after the Java s
         if (file_pass(root, NULL, i, buf, bufsz, &done) <= 0) { bad++; if (first_bad < 0) first_bad = i; printf("data: %s missing or differs\n", k_datafiles[i].path); }
         progress_pct("Checking the game files...", done, &last);
     }
-    free(buf); java_progress(NULL);
+    free(buf); show_progress(NULL);
     printf("data: the %s CD\n", k_releases[datafile_best(g_fit)]);
     if (bad) {
         snprintf(m, sizeof m, "%d game files are missing or match none of the supported CDs (the first: %s).\n\n"
@@ -392,6 +419,39 @@ const char *data_find(void)
         }
     }
 }
+#else
+const char *data_find(void)
+{
+    const char *env = getenv("WOODY_DATA"); if (env && *env) return env;
+    char home[PMAX], p[PMAX + 16], iso[PMAX + 260] = "", m[3 * PMAX];
+    home_dir(home); snprintf(p, sizeof p, "%s/", home); make_dirs(p);
+    snprintf(p, sizeof p, "%s/data", home); if (cd_layout(p)) return enter(home, "data/Data");
+    if (cd_layout(home)) return enter(home, "Data");
+    DIR *d = opendir(home); struct dirent *de;                  /* an ISO image of the CD beside woodyre.nro */
+    if (d) {
+        while ((de = readdir(d))) { size_t n = strlen(de->d_name); if (n > 4 && !strcasecmp(de->d_name + n - 4, ".iso")) { snprintf(iso, sizeof iso, "%s/%s", home, de->d_name); break; } }
+        closedir(d);
+    }
+    if (*iso) {
+        int fd = open(iso, O_RDONLY), bad = -1;
+        if (fd < 0) { snprintf(m, sizeof m, "Could not open %s", iso); plat_message(m, 1); return NULL; }
+        mkdir(p, 0755); show_progress("WoodyRE: unpacking the game files from the ISO image, this happens once ...\n");
+        bad = iso_copy(fd, home); close(fd);
+        if (g_con) { consoleExit(NULL); g_con = 0; }
+        if (bad >= 0 && cd_layout(p)) {
+            printf("data: unpacked %s; the ISO image is no longer needed\n", iso);
+            return enter(home, "data/Data");
+        }
+        return NULL;
+    }
+    snprintf(m, sizeof m, "WoodyRE needs the files of the original game CD-ROM:\n"
+                          "Woody Woodpecker: Escape from Buzz Buzzard Park (PC; the English, Brazilian, Polish, Spanish or Russian CD).\n\n"
+                          "Put an ISO image of the CD into %s/ (it is unpacked once, then it can be deleted), "
+                          "or copy Data, Common, Logo, Game and Music.bf from the CD into\n%s/data/\nand start WoodyRE again.", home, home);
+    plat_message(m, 1);
+    return NULL;
+}
+#endif
 #endif
 
 int data_verify(const char *data_dir)

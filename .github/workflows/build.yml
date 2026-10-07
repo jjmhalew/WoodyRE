@@ -1,7 +1,8 @@
-# Builds WoodyRE.exe with build.bat (Windows), woodyre with build.sh (Linux, SDL2) and the Android APK (android/, Gradle) on
-# every push and pull request (no game data involved: the programs hold only the port's own code). A pushed tag v* also
-# publishes a GitHub release with WoodyRE-<tag>.zip (WoodyRE.exe, README.md, LICENSE), WoodyRE-<tag>-linux-x86_64.tar.gz
-# (woodyre, README.md, LICENSE) and WoodyRE-<tag>.apk.
+# Builds WoodyRE.exe with build.bat (Windows), woodyre with build.sh (Linux, SDL2), the Android APK (android/, Gradle) and
+# woodyre.nro with build_switch.sh (Switch homebrew) on every push and pull request (no game data involved: the programs
+# hold only the port's own code). A pushed tag v* also publishes a GitHub release with WoodyRE-<tag>.zip (WoodyRE.exe,
+# README.md, LICENSE), WoodyRE-<tag>-linux-x86_64.tar.gz (woodyre, README.md, LICENSE), WoodyRE-<tag>.apk and
+# WoodyRE-<tag>-switch.zip (switch/woodyre/woodyre.nro, to unpack onto the SD card, README.md, LICENSE).
 name: build
 
 on:
@@ -106,10 +107,32 @@ jobs:
           name: WoodyRE-android
           path: ${{ env.APK }}
 
+  # Nintendo Switch homebrew (.nro) in devkitPro's own image, which holds devkitA64, libnx, switch-sdl2 and switch-mesa.
+  switch:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        run: sh build_switch.sh woodyre && ls -l woodyre.nro
+
+      - name: Package
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then name="WoodyRE-$GITHUB_REF_NAME"; else name=$(printf 'WoodyRE-%.7s' "$GITHUB_SHA"); fi
+          mkdir -p "pkg/switch/woodyre" && cp woodyre.nro "pkg/switch/woodyre/" && cp README.md LICENSE pkg/
+          (cd pkg && zip -qr "../$name-switch.zip" .)
+          echo "SWZIP=$name-switch.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: WoodyRE-switch
+          path: ${{ env.SWZIP }}
+
   # The release notes: the annotated tag's message (what is new; its first line is the title of the tag), then how to start.
   release:
     if: github.ref_type == 'tag'
-    needs: [windows, linux, android]
+    needs: [windows, linux, android, switch]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -127,6 +150,6 @@ jobs:
         run: |
           git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           new=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed -e 's/[[:space:]]*$//')
-          start="Windows: unzip, start WoodyRE.exe and point it to your Woody Woodpecker CD (or a mounted ISO image of it). Linux / Steam Deck: unpack the .tar.gz and start woodyre (needs SDL2). Android: install the .apk and choose your ISO image or a copy of the CD at the first start. The game files are not included - see README.md."
+          start="Windows: unzip, start WoodyRE.exe and point it to your Woody Woodpecker CD (or a mounted ISO image of it). Linux / Steam Deck: unpack the .tar.gz and start woodyre (needs SDL2). Android: install the .apk and choose your ISO image or a copy of the CD at the first start. Switch (homebrew, experimental): unpack the -switch.zip onto the SD card and put your ISO image into /switch/woodyre/. The game files are not included - see README.md."
           if [ -n "$new" ]; then printf '%s\n\n%s\n' "$new" "$start" > notes.md; else printf '%s\n' "$start" > notes.md; fi
           gh release create "$GITHUB_REF_NAME" dist/* --title "WoodyRE $GITHUB_REF_NAME" --notes-file notes.md

@@ -64,7 +64,7 @@ static void vpad_drive(double now)
     for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++) SDL_JoystickSetVirtualButton(j, b, (Uint8)(m >> b & 1));
 }
 
-const char *pad_kind_name(int kind) { return kind == PADK_DS5 ? "DualSense" : kind == PADK_DS4 ? "DualShock 4" : kind == PADK_XBOX ? "Xbox controller" : "none"; }
+const char *pad_kind_name(int kind) { return kind == PADK_DS5 ? "DualSense" : kind == PADK_DS4 ? "DualShock 4" : kind == PADK_XBOX ? "Xbox controller" : kind == PADK_SWITCH ? "Switch controller" : "none"; }
 
 static void open_new(void)
 {
@@ -75,9 +75,13 @@ static void open_new(void)
         if (have || slot < 0) continue;
         SDL_GameController *c = SDL_GameControllerOpen(j); if (!c) continue;
         int t = SDL_GameControllerGetType(c), kind = t == SDL_CONTROLLER_TYPE_PS5 ? PADK_DS5 : t == SDL_CONTROLLER_TYPE_PS4 ? PADK_DS4 : PADK_XBOX;
+        if (t == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO || t == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) kind = PADK_SWITCH;   /* SDL goes by the labels: A = the right button */
+#ifdef __SWITCH__
+        kind = PADK_SWITCH;                                             /* the Joy-Cons, handheld mode, a Pro Controller */
+#endif
         P.p[slot].c = c; P.p[slot].id = id; P.p[slot].kind = kind; P.p[slot].sent = -1; memset(&P.p[slot].st, 0, sizeof P.p[slot].st);
         printf("pad: %s connected (\"%s\", SDL)\n", pad_kind_name(kind), SDL_GameControllerName(c));
-        if (kind != PADK_XBOX && !penv("WOODY_PADNOLIGHT")) {               /* Woody red, the middle player light (as pad.c) */
+        if ((kind == PADK_DS4 || kind == PADK_DS5) && !penv("WOODY_PADNOLIGHT")) {               /* Woody red, the middle player light (as pad.c) */
             SDL_GameControllerSetLED(c, 0xd0, 0x10, 0x08); SDL_GameControllerSetPlayerIndex(c, 0);
         }
     }

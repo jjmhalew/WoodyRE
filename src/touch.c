@@ -50,6 +50,8 @@ static void check_init(void)
     T.init = 1;
 #ifdef __ANDROID__
     T.enabled = 1; T.shown = 1;
+#elif defined __SWITCH__
+    T.enabled = 1;                                                          /* the handheld's screen: shown once it is touched */
 #else
     const char *e = getenv("WOODY_TOUCH"); T.enabled = e && atoi(e) != 0;
 #endif

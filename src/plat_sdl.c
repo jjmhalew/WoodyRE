@@ -1,5 +1,6 @@
 /* plat_sdl.c - the window, keyboard, mouse and OS bits of render_gl.h / plat.h on SDL2, for the builds outside Windows
- * (Linux, Steam Deck: build.sh; Android: android/, on OpenGL ES 2.0 / 3.0 through src/gles). The Windows build keeps its own
+ * (Linux, Steam Deck: build.sh; Android: android/ and the Switch: build_switch.sh, both on OpenGL ES 2.0 / 3.0 through
+ * src/gles). The Windows build keeps its own
  * Win32 + WGL window in render_gl.c. Keys arrive as SDL
  * scancodes and are stored as the Windows virtual-key codes the rest of the engine uses: letters by the layout (as VK
  * letters are on Windows), everything else by position; Ctrl / Shift / Alt set both their side and the plain code. */
@@ -71,7 +72,7 @@ int plat_vsc_to_vk(int sc)            /* MapVirtualKey(sc, MAPVK_VSC_TO_VK) of a
         VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD0, VK_DECIMAL, 0, 0, VK_OEM_102, VK_F11, VK_F12 };
     return sc > 0 && sc < 0x59 ? T[sc] : 0;
 }
-#ifdef __ANDROID__
+#if defined __ANDROID__ || defined __SWITCH__
 void (*plat_gl_proc(const char *name))(void) { return gles_proc(name); }   /* eglGetProcAddress may hand out stubs for any name */
 #else
 void (*plat_gl_proc(const char *name))(void) { return (void (*)(void))SDL_GL_GetProcAddress(name); }
@@ -96,6 +97,14 @@ int plat_dialog(const char *text, const char *b1, const char *b2, const char *b3
     return r;
 }
 void plat_message(const char *text, int warn) { (void)warn; printf("%s\n", text); plat_dialog(text, "OK", NULL, NULL); }
+#elif defined __SWITCH__
+#include <switch/applets/error.h>                              /* not all of switch.h: its PadState is not pad.h's */
+/* SDL has no message box on the Switch: the system's error dialog shows the text with one button */
+void plat_message(const char *text, int warn)
+{
+    (void)warn; printf("%s\n", text); fflush(stdout);
+    ErrorApplicationConfig c; errorApplicationCreate(&c, text, NULL); errorApplicationShow(&c);
+}
 #else
 void plat_message(const char *text, int warn)
 {
@@ -183,9 +192,11 @@ int win_open(Window *w, const char *title, int width, int height)
     SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
     flags |= SDL_WINDOW_FULLSCREEN;
     log_tee();
+#elif defined __SWITCH__
+    flags |= SDL_WINDOW_FULLSCREEN; width = 1280; height = 720;        /* the whole screen; SDL follows docked / handheld */
 #endif
     if (SDL_InitSubSystem(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return -1; }
-#ifdef __ANDROID__
+#if defined __ANDROID__ || defined __SWITCH__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
@@ -246,7 +257,7 @@ void win_swap(Window *w)
 void win_mode(Window *w, int width, int height, int full)
 {
     SDL_Window *sw = (SDL_Window *)w->hwnd;
-#ifdef __ANDROID__
+#if defined __ANDROID__ || defined __SWITCH__
     (void)width; (void)height; (void)full; (void)sw; drawable(w); return;   /* always the whole screen */
 #endif
     if (full) { SDL_SetWindowFullscreen(sw, SDL_WINDOW_FULLSCREEN_DESKTOP); drawable(w); return; }
