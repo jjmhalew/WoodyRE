@@ -437,12 +437,10 @@ const char *data_find(void)
         if (fd < 0) { snprintf(m, sizeof m, "Could not open %s", iso); plat_message(m, 1); return NULL; }
         mkdir(p, 0755); show_progress("WoodyRE: unpacking the game files from the ISO image, this happens once ...\n");
         bad = iso_copy(fd, home); close(fd);
-        if (g_con) { consoleExit(NULL); g_con = 0; }
-        if (bad >= 0 && cd_layout(p)) {
-            printf("data: unpacked %s; the ISO image is no longer needed\n", iso);
-            return enter(home, "data/Data");
-        }
-        return NULL;
+        int ok = bad >= 0 && cd_layout(p);
+        if (ok) show_progress("\nDone. The ISO image is no longer needed and can be deleted.\n");
+        if (g_con) { consoleExit(NULL); g_con = 0; }   /* stdout still leads to the closed console: no printf until main reopens it */
+        return ok ? enter(home, "data/Data") : NULL;
     }
     snprintf(m, sizeof m, "WoodyRE needs the files of the original game CD-ROM:\n"
                           "Woody Woodpecker: Escape from Buzz Buzzard Park (PC; the English, Brazilian, Polish, Spanish or Russian CD).\n\n"

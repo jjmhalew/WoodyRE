@@ -75,7 +75,10 @@ static void open_new(void)
         if (have || slot < 0) continue;
         SDL_GameController *c = SDL_GameControllerOpen(j); if (!c) continue;
         int t = SDL_GameControllerGetType(c), kind = t == SDL_CONTROLLER_TYPE_PS5 ? PADK_DS5 : t == SDL_CONTROLLER_TYPE_PS4 ? PADK_DS4 : PADK_XBOX;
-        if (t == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO || t == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) kind = PADK_SWITCH;   /* SDL goes by the labels: A = the right button */
+        if (t == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO) kind = PADK_SWITCH;   /* SDL goes by the labels: A = the right button */
+#if SDL_VERSION_ATLEAST(2, 24, 0)
+        if (t == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) kind = PADK_SWITCH;
+#endif
 #ifdef __SWITCH__
         kind = PADK_SWITCH;                                             /* the Joy-Cons, handheld mode, a Pro Controller */
 #endif
