@@ -1,7 +1,7 @@
 # DISPLAY.md — display mode, frame pacing, and the port's display options (Woody.exe, build 17-10-2001)
 
 §1–§2 are static analysis of `out/disasm_full.txt` (imagebase 0x400000) and of `game/Setup.dll` (capstone, imagebase
-0x10000000); nothing was traced. §3–§5 describe the port: **everything in §3–§5 is a port extra** (issue #12); the original
+0x10000000); nothing was traced. §3–§6 describe the port: **everything in §3–§6 is a port extra** (issue #12); the original
 has no display options in the game itself. Related: MENU_OPTIONS.md (page 0x1b), INPUT.md §2 (Woody.cfg layout),
 CAMERA.md §5 (projection), HNM.md (films).
 
@@ -20,6 +20,8 @@ CAMERA.md §5 (projection), HNM.md (films).
 - **Aspect**: the layout (HUD, menus: 640x480 virtual) and the 3D projection are fixed 4:3; a non-4:3 mode is stretched.
 - **Port**: window of any size or borderless fullscreen, 4:3 (pillarboxed) or wide (Hor+, menus kept 4:3 and centred, HUD at the edges),
   vsync (default on, as the original), optional fps cap, all saved in `woodyre.cfg`; a "Display" page under Options.
+  A "Graphics" page adds ambient occlusion, texture sharpness (anisotropic filtering) and edge smoothing (SMAA, MSAA),
+  all off by default, which is the original's look (§5).
 
 ## 1. The original: display mode
 
@@ -136,7 +138,8 @@ So the game speed is real time down to 10 fps, slow motion below. The port does 
 ## 4. Port: the Display page (PORT EXTRA)
 
 Options page 0x1b gets a sixth item **"Display"** after "Continue" (y 424.5, the proposal of MENU_OPTIONS.md §9.4; the
-original five stay where they were). It opens port page **0x40**, the same list class (size 30, centred, white, 2 Hz
+original five stay where they were). "Graphics" (§5) and "Controls" (INPUT.md) follow it; with eight items the page starts
+at y-fraction 0.17 instead of 0.4. "Display" opens port page **0x40**, the same list class (size 30, centred, white, 2 Hz
 blink, no cursor), y-fraction 0.25:
 
 | i | text | flags | left/right |
@@ -154,7 +157,52 @@ turned into the font's codes (`hud_port_str`, refs `0x7f000000 | n`, the glyph o
 characters exist). Left/right blink like a slider step (phase 0.25). **Back** drops the edit; nothing is applied before
 Continue. In a level the page has the half-black backdrop and pauses the world like 0x1b.
 
-## 5. Port: storage and overrides (PORT EXTRA)
+## 5. Port: the Graphics page (PORT EXTRA)
+
+Options → **Graphics** opens port page **0x42**, the class of the Display page (y-fraction 0.25, left / right change a
+choice, Continue applies at once without touching the window and saves, back drops the edit):
+
+| i | text | woodyre.cfg | choices |
+|---|---|---|---|
+| 0 | Graphics | | header |
+| 1 | Ambient occlusion | `ao=` | Off, On |
+| 2 | Texture sharpness | `aniso=` | Original (1), 2x, 4x, 8x, 16x |
+| 3 | Edge smoothing | `smaa=` | Off (0), Low, Medium, High, Ultra (1..4) |
+| 4 | Multisampling | `msaa=` | Off (0), 2x, 4x, 8x |
+| 5 | Continue | | |
+
+A choice the GL cannot do shows **"Not supported"** (and the lists stop at what the driver offers). The Android and
+Switch builds draw through the GLES 2 shim of `src/gles`: there only texture sharpness can work (when the driver has
+`GL_EXT_texture_filter_anisotropic`). Everything after the 3D picture - HUD, menus, text, fades, films - is drawn into
+the window directly and is never smoothed or darkened.
+
+- **Ambient occlusion** (`gtao.c`; the original has nothing like it, its world light is the baked `.lit` polygons,
+  LIGHTING.md): GTAO (Jimenez et al. 2016, in the form of Intel's XeGTAO) as a screen-space pass over the opaque image.
+  `rnd_frame` calls `gtao_frame` at the end of pass 0, after the opaque world and models and before the additive world
+  faces, the water, the fade list and the sprites, so glow, water and HUD are never darkened. The depth of the 3D
+  viewport is copied into a depth texture (with MSAA: resolved by a depth blit into a depth / stencil texture); a
+  GLSL 1.20 pass into an RGBA8 framebuffer object takes the view-space position and normal from the depth and integrates
+  the visible arc of 3 slices x 6 steps per side within 120 world units (Woody is 193 tall; the screen radius is capped
+  at a quarter of the view height), slice rotation and step offset from a 4x4 Bayer tile; a 4x4 depth-aware box blur
+  (one noise tile) multiplies `visibility^1.5` into the frame (blend ZERO / SRC_COLOR).
+- **Texture sharpness** (`render_gl.c`, `rnd_set_aniso`): `GL_TEXTURE_MAX_ANISOTROPY` on every level texture (world,
+  models, sky, texture-pack replacements), on top of the original's own filtering (its 4-level mip chain with
+  `GL_LINEAR_MIPMAP_NEAREST`, MODEL_RENDER.md): floors and walls seen at a grazing angle stay sharp further away. A change
+  is applied to the loaded textures at the next frame.
+- **Edge smoothing / multisampling** (`postfx.c`): with either on, `postfx_begin` (main loop, before `rnd_frame`)
+  binds an own target of the window's size (colour RGBA8, depth 24 + stencil 8 for the cast shadows) and the 3D picture
+  is drawn into it as into the window; `postfx_end` (after `rnd_sorted`, before the 2D layer) puts it into the window.
+  **MSAA**: the target is multisampled and resolved with `glBlitFramebuffer` - polygon edges only, the colour-key
+  cut-outs (foliage, fences) stay hard. **SMAA** (Jimenez et al. 2012, the 1x mode of `src/smaa/smaa.h`, which
+  `tools/smaa_embed.py` makes from iryoku/smaa, MIT): colour edge detection, blending weights from the edge shapes with
+  the AreaTex / SearchTex lookups (embedded as PNG, decoded with stb_image), neighbourhood blending into the window; the
+  presets are SMAA's own (Low / Medium / High / Ultra). It also smooths the cut-outs, and runs after the MSAA resolve when
+  both are on. SMAA needs GLSL 1.30, MSAA framebuffer objects with multisample renderbuffers (GL 3.0).
+- **Cost** (RX 6800, 1920x1080, vsync off; the engine is CPU bound, so most of it hides behind the CPU): W1A 1.54 ms per
+  frame with everything off, 1.61 with ambient occlusion, 1.57 with SMAA High or MSAA 4x, 1.90 with everything at
+  maximum; WWS 0.81 / 1.27 / 0.81 / 1.62 ms.
+
+## 6. Port: storage and overrides (PORT EXTRA)
 
 `woodyre.cfg` (key=value, read at boot before the window opens, written on Continue and at exit):
 ```
@@ -163,10 +211,15 @@ window=1280x800
 fullscreen=0
 vsync=1
 fpscap=0           # 0 = off
+ao=0               # the Graphics page (§5): ambient occlusion 0/1
+aniso=1            # texture sharpness 1 (the original), 2, 4, 8, 16
+smaa=0             # edge smoothing 0 = off, 1..4 = low, medium, high, ultra
+msaa=0             # multisampling 0 = off, 2, 4, 8
 ```
 Defaults = the port's window before these options (1280x800, wide, windowed, vsync on, no cap; vsync from Woody.cfg while
-the key is missing, §3). The same file also keeps `reverse_stereo=` and `film_sound=` (SETUP.md 3). Overrides:
-`--res WxH`, `--windowed`, `--fullscreen`, `--aspect 4:3|wide`, `WOODY_VSYNC=0/1`, `WOODY_FPSCAP=N`. A screenshot run
+the key is missing, §3) and the Graphics page all off. The same file also keeps `reverse_stereo=` and `film_sound=`
+(SETUP.md 3). Overrides: `--res WxH`, `--windowed`, `--fullscreen`, `--aspect 4:3|wide`, `WOODY_VSYNC=0/1`,
+`WOODY_FPSCAP=N`, `WOODY_AO=0/1`, `WOODY_ANISO=N`, `WOODY_SMAA=0..4`, `WOODY_MSAA=0/2/4/8`. A screenshot run
 (`--shot`, `WOODY_SHOTSEQ`, `WOODY_LOGOSHOT`) ignores the cfg's display keys and starts from the defaults, so test images
 stay 1280x800 wide unless the command line says otherwise. `WOODY_FPS=N` (testing: frame-rate dependent code) still
 takes precedence over the cap. `WOODY_FPSLOG=1` prints the frame rate every 2 s. `WOODY_FIXDT=N` (testing) advances the
@@ -174,7 +227,7 @@ game clock by exactly 1/N s per frame whatever the wall clock says, and the hook
 `WOODY_SHOTSEQ`, `WOODY_KEYS`) follow that clock, so two builds produce the same frames: diff their screenshots pixel for
 pixel (renderer changes that must not change the picture).
 
-## 6. Uncertain
+## 7. Uncertain
 
 1. ~~Whether the Win9x/NT inversion of the VSync flag is deliberate; the Setup.dll per-device default~~: settled in §2.2
    and SETUP.md 2 (label "Activate VSync"; right on Win9x, inverted on NT, re-inverted into the cfg at every quit; default

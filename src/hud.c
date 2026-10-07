@@ -320,6 +320,17 @@ static const struct { const char *en, *tr[4]; } k_port_tr[] = {   /* tr = Polish
     { "Fullscreen",       { "Pełny ekran", "Pantalla completa", "Tela cheia", "Полный экран" } },
     { "VSync",            { "Synchronizacja pionowa", "Sincronización vertical", "Sincronização vertical", "Верт. синхронизация" } },
     { "Frame rate limit", { "Limit klatek", "Límite de fotogramas", "Limite de quadros", "Лимит кадров" } },
+    { "Graphics",         { "Grafika", "Gráficos", "Gráficos", "Графика" } },
+    { "Ambient occlusion", { "Okluzja otoczenia", "Oclusión ambiental", "Oclusão de ambiente", "Фоновое затенение" } },
+    { "Texture sharpness", { "Ostrość tekstur", "Nitidez de texturas", "Nitidez das texturas", "Четкость текстур" } },
+    { "Edge smoothing",   { "Wygładzanie krawędzi", "Suavizado de bordes", "Suavização de bordas", "Сглаживание краев" } },
+    { "Multisampling",    { "Multisampling", "Multimuestreo", "Multiamostragem", "Мультисэмплинг" } },
+    { "Original",         { "Oryginalna", "Original", "Original", "Исходная" } },
+    { "Low",              { "Niskie", "Bajo", "Baixo", "Низкое" } },
+    { "Medium",           { "Średnie", "Medio", "Médio", "Среднее" } },
+    { "High",             { "Wysokie", "Alto", "Alto", "Высокое" } },
+    { "Ultra",            { "Ultra", "Ultra", "Ultra", "Ультра" } },
+    { "Not supported",    { "Nieobsługiwane", "No compatible", "Não suportado", "Не поддерживается" } },
     { "Device:",          { "Urządzenie:", "Dispositivo:", "Dispositivo:", "Устройство:" } },
     { "Controller",       { "Pad", "Mando", "Controle", "Геймпад" } },
     { "Keyboard",         { "Klawiatura", "Teclado", "Teclado", "Клавиатура" } },
@@ -422,7 +433,7 @@ static uint16_t port_glyph(unsigned c)
  * through g_chr (font_letters), again whenever another font was loaded. A letter the level font lacks (the English ones have
  * no "Z" or "j", the Polish no "X", the Russian no "J" or "z") comes from the Credits font as 0x8000 | its code, else
  * port_glyph's fallbacks, else the space. Ref = 0x7f000000 | slot. */
-static struct { char a[128]; uint16_t u[64]; unsigned gen; } g_pstr[96]; static int g_npstr;   /* 0..63 kept for good, 64..95 the rewritable ones of hud_port_str_tmp */
+static struct { char a[128]; uint16_t u[64]; unsigned gen; } g_pstr[160]; static int g_npstr;   /* 0..127 kept for good, 128..159 the rewritable ones of hud_port_str_tmp */
 static void port_encode(int i)
 {
     int n = 0; uint16_t sp = g_chr[' '] ? g_chr[' '] : 18;
@@ -440,21 +451,21 @@ static void port_codes(int i, const char *ascii)
 uint32_t hud_port_str(const char *ascii)
 {
     int i; for (i = 0; i < g_npstr; i++) if (!strcmp(g_pstr[i].a, ascii)) return 0x7f000000u | (uint32_t)i;
-    if (g_npstr == 64) return 0x7f000000u;
+    if (g_npstr == 128) return 0x7f000000u;
     port_codes(i, ascii); g_npstr++;
     return 0x7f000000u | (uint32_t)i;
 }
 uint32_t hud_port_str_tmp(int k, const char *ascii)  /* slot k (0..31), rewritten on every call: for texts that keep changing (the Controls page) */
 {
     if (k < 0 || k >= 32) return 0x7f000000u;
-    port_codes(64 + k, ascii);
-    return 0x7f000000u | (uint32_t)(64 + k);
+    port_codes(128 + k, ascii);
+    return 0x7f000000u | (uint32_t)(128 + k);
 }
 static const uint16_t *hud_string(uint32_t ref)
 {
     uint32_t i = ref & 0xffff;
     if ((ref >> 24) == 0x7f) {
-        if (!((int)i < g_npstr || (i >= 64 && i < 96))) return NULL;
+        if (!((int)i < g_npstr || (i >= 128 && i < 160))) return NULL;
         if (g_pstr[i].gen != g_font_gen) port_encode((int)i);
         return g_pstr[i].u;
     }

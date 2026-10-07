@@ -11,7 +11,7 @@ cd /d "%~dp0"
 set "ZIG_VER=0.16.0"
 set "ZIG_SHA=68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e"
 set "ZIG_NAME=zig-x86_64-windows-%ZIG_VER%"
-set "SRC=src\level.c src\render_gl.c src\main_engine.c src\player.c src\instance.c src\enemy.c src\boss.c src\water.c src\storm.c src\ekovm.c src\audio.c src\hud.c src\hnm.c src\ambient.c src\blackbox.c src\datasetup.c src\pad.c src\texpack.c"
+set "SRC=src\level.c src\render_gl.c src\main_engine.c src\player.c src\instance.c src\enemy.c src\boss.c src\water.c src\storm.c src\ekovm.c src\audio.c src\hud.c src\hnm.c src\ambient.c src\blackbox.c src\datasetup.c src\pad.c src\texpack.c src\gtao.c src\postfx.c"
 set "LIBS=-lopengl32 -lgdi32 -luser32 -lwinmm -lbcrypt -lshell32 -lole32 -lhid -lsetupapi"
 rem zig cc compiles for the CPU of the build machine unless told otherwise: an exe built on a new PC or on the CI runner
 rem then uses AVX2/AVX-512 and dies with "illegal instruction" (0xc000001d) on older CPUs. Plain x86-64 runs everywhere.

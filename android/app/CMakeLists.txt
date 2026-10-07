@@ -16,7 +16,7 @@ FetchContent_MakeAvailable(SDL2)
 set(S ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 add_library(main SHARED
     ${S}/level.c ${S}/render_gl.c ${S}/main_engine.c ${S}/player.c ${S}/instance.c ${S}/enemy.c ${S}/boss.c ${S}/water.c
-    ${S}/storm.c ${S}/ekovm.c ${S}/audio.c ${S}/hud.c ${S}/hnm.c ${S}/ambient.c ${S}/blackbox.c ${S}/texpack.c
+    ${S}/storm.c ${S}/ekovm.c ${S}/audio.c ${S}/hud.c ${S}/hnm.c ${S}/ambient.c ${S}/blackbox.c ${S}/texpack.c ${S}/gtao.c ${S}/postfx.c
     ${S}/plat_sdl.c ${S}/pad_sdl.c ${S}/datasetup_posix.c ${S}/touch.c ${S}/gles/gles2.c)
 target_include_directories(main PRIVATE ${S}/gles ${S})
 target_compile_definitions(main PRIVATE WOODY_GUI)                  # the release build: stdout to woodyre.log beside the data

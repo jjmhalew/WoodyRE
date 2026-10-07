@@ -33,6 +33,8 @@
 #include "datasetup.h"
 #include "pad.h"
 #include "texpack.h"
+#include "gtao.h"
+#include "postfx.h"
 #ifdef WOODY_GUI
 #define WOODY_DEBUG_TITLE 0                     /* the release build keeps the plain window title */
 #define WOODY_DEBUG_KEYS (wenv("WOODY_DEBUGKEYS") != NULL)   /* and the developer keys only on request */
@@ -489,13 +491,16 @@ static int g_pad_dz = 30;                               /* woodyre.cfg pad_deadz
 /* ---- display (docs/DISPLAY.md; everything here is a PORT EXTRA). The original runs exclusive fullscreen at the Woody.cfg mode
  * (Detect's list, default 640x480), always 4:3 in the layout, and paces itself only by Flip(DDFLIP_WAIT) = vsync (0x47ee90);
  * no frame cap, dt clamped to 0.1 s (0x40185b). The port: a window of any size or borderless fullscreen, 4:3 pillarboxed or a
- * wide Hor+ view (the vertical fov stays, the HUD / menus keep their 640x480 layout centred), vsync, an optional frame cap. */
-typedef struct { int wide, w, h, full, vsync, cap; } Display;
-static Display g_disp = { 1, 1280, 800, 0, 1, 0 };      /* woodyre.cfg; 1280x800 wide = the port's window before these options */
+ * wide Hor+ view (the vertical fov stays, the HUD / menus keep their 640x480 layout centred), vsync, an optional frame cap.
+ * The Graphics page (all off by default, the original's look): ambient occlusion (gtao.c), texture sharpness = anisotropic
+ * filtering (render_gl.c, 1 = off), edge smoothing SMAA 0..4 and multisampling MSAA 0/2/4/8 (postfx.c). */
+typedef struct { int wide, w, h, full, vsync, cap, ao, aniso, smaa, msaa; } Display;
+static Display g_disp = { 1, 1280, 800, 0, 1, 0, 0, 1, 0, 0 };     /* woodyre.cfg; 1280x800 wide = the port's window before these options */
 static Display g_dnow;                                  /* what runs: g_disp, or the defaults for a --shot run, plus the overrides */
 static int g_disp_dirty;                                /* the main loop applies g_dnow (window mode, vsync) */
 static const int k_disp_res[][2] = { {640,480}, {800,600}, {1024,768}, {1280,960}, {1280,720}, {1280,800}, {1600,900}, {1920,1080}, {2560,1440}, {3840,2160} };
 static const int k_disp_cap[] = { 0, 30, 60, 120, 144, 240 };
+static const int k_gfx_aniso[] = { 1, 2, 4, 8, 16 }, k_gfx_msaa[] = { 0, 2, 4, 8 };
 #define NRES (int)(sizeof k_disp_res / sizeof k_disp_res[0])
 #define NCAP (int)(sizeof k_disp_cap / sizeof k_disp_cap[0])
 static void opt_read(void)
@@ -508,6 +513,10 @@ static void opt_read(void)
         else if (sscanf(line, "fullscreen=%d", &v) == 1) g_disp.full = v != 0; else if (sscanf(line, "vsync=%d", &v) == 1) g_disp.vsync = g_setup.vsync = v != 0;
         else if (sscanf(line, "reverse_stereo=%d", &v) == 1) g_setup.rev = v != 0; else if (sscanf(line, "film_sound=%d", &v) == 1) g_setup.film = v != 0;
         else if (sscanf(line, "logos=%d", &v) == 1) g_logos = v != 0;
+        else if (sscanf(line, "ao=%d", &v) == 1) g_disp.ao = v != 0;
+        else if (sscanf(line, "aniso=%d", &v) == 1) g_disp.aniso = v < 1 ? 1 : v > 16 ? 16 : v;
+        else if (sscanf(line, "smaa=%d", &v) == 1) g_disp.smaa = v < 0 ? 0 : v > 4 ? 4 : v;
+        else if (sscanf(line, "msaa=%d", &v) == 1) g_disp.msaa = v < 2 ? 0 : v > 8 ? 8 : v;
         else if (sscanf(line, "pad_deadzone=%d", &v) == 1) g_pad_dz = v < 0 ? 0 : v > 90 ? 90 : v;
         else if (sscanf(line, "camera_speed=%d", &v) == 1) g_cam_speed = v < 10 ? 10 : v > 300 ? 300 : v;
         else if ((!strncmp(line, "key_", 4) || !strncmp(line, "pad_", 4)) && strchr(line, '=') && g_nbind_cfg < 32) {
@@ -520,6 +529,7 @@ static void opt_write(void)
     FILE *f = fopen("woodyre.cfg", "w"); if (!f) return;
     fprintf(f, "sfx=%d\nmusic=%d\nrumble=%d\n", g_opt.sfx, g_opt.music, g_opt.vib);
     fprintf(f, "aspect=%s\nwindow=%dx%d\nfullscreen=%d\nvsync=%d\nfpscap=%d\n", g_disp.wide ? "wide" : "4:3", g_disp.w, g_disp.h, g_disp.full, g_disp.vsync, g_disp.cap);
+    fprintf(f, "ao=%d\naniso=%d\nsmaa=%d\nmsaa=%d\n", g_disp.ao, g_disp.aniso, g_disp.smaa, g_disp.msaa);
     fprintf(f, "reverse_stereo=%d\nfilm_sound=%d\nlogos=%d\npad_deadzone=%d\ncamera_speed=%d\n", g_setup.rev > 0, g_setup.film != 0, g_logos, g_pad_dz, g_cam_speed);
     ctl_write(f);
     fclose(f);
@@ -539,6 +549,11 @@ static void disp_apply(Window *w)
     if (g_dnow.cap > 0) timeBeginPeriod(1);                                          /* Sleep(1) of the frame cap: 1 ms, not 15.6 */
     printf("display: %dx%d %s, %s, vsync %s, fps cap %d\n", w->width, w->height, g_dnow.full ? "fullscreen" : "window", g_dnow.wide ? "wide (Hor+)" : "4:3", g_dnow.vsync ? "on" : "off", g_dnow.cap);
     g_disp_dirty = 0;
+}
+static void gfx_apply(void)                             /* the Graphics page's settings (all port extras); cheap, no window change */
+{
+    gtao_enable(g_dnow.ao); rnd_set_aniso(g_dnow.aniso); postfx_set(g_dnow.msaa, g_dnow.smaa);
+    printf("graphics: ambient occlusion %s, texture sharpness %dx, SMAA %d, MSAA %dx\n", g_dnow.ao ? "on" : "off", g_dnow.aniso, g_dnow.smaa, g_dnow.msaa);
 }
 
 /* ---- input (docs/INPUT.md): the key bindings of Woody.cfg, the joystick and the action layer of 0x402940. Everything
@@ -1021,7 +1036,7 @@ static const MenuItem k_page17[] = { {61,2}, {1,2}, {5,1}, {6,1} };   /* 0x4b5c9
 static const MenuItem k_page18[] = { {4,1}, {36,1}, {2,1} };
 static const MenuItem k_page19[] = { {4,1}, {19,1}, {36,1}, {2,1} };   /* 0x4b5d18: Continue (5), Start again (18), Options (6), Quit (7) */
 static const MenuItem k_page1c[] = { {3,2}, {5,1}, {6,1} };
-static MenuItem k_page1b[] = { {36,2}, {38,0x10}, {39,0x10}, {132,0x10}, {4,1}, {0,1}, {0,1} };   /* items 5 "Display" and 6 "Controls": port extras, ids set on enter (the page starts at 0.33 instead of 0.4 to fit them) */
+static MenuItem k_page1b[] = { {36,2}, {38,0x10}, {39,0x10}, {132,0x10}, {4,1}, {0,1}, {0,1}, {0,1} };   /* items 5 "Display", 6 "Graphics" and 7 "Controls": port extras, ids set on enter (the page starts at 0.17 instead of 0.4 to fit them) */
 /* port page 0x40 "Display" (docs/DISPLAY.md 4), the list class of 0x1b with choices (flag 0x100): ids and values are
  * port strings or Common 133 "On" / 134 "Off", filled in by disp_items */
 static MenuItem k_page40[7] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
@@ -1047,6 +1062,36 @@ static void disp_step(int item, int dir)               /* left / right on a choi
     case 3: d->full ^= 1; break;
     case 4: d->vsync ^= 1; break;
     case 5: { int i = 0; while (i < NCAP && k_disp_cap[i] != d->cap) i++; i = i == NCAP ? 0 : (i + dir + NCAP) % NCAP; d->cap = k_disp_cap[i]; break; }
+    }
+}
+/* port page 0x42 "Graphics" (docs/DISPLAY.md 5), the same list class: what the GL cannot do shows "Not supported" */
+static MenuItem k_page42[6] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
+static void gfx_items(void)
+{
+    const Display *d = &M.disp; char b[24]; int ns = (int)hud_port_str("Not supported");
+    static const char *k_q[5] = { "Off", "Low", "Medium", "High", "Ultra" };
+    k_page42[0].id = hud_port_str("Graphics");
+    k_page42[1].id = hud_port_str("Ambient occlusion"); k_page42[1].value = !gtao_supported() ? ns : d->ao ? 133 : 134;
+    snprintf(b, sizeof b, "%dx", d->aniso);
+    k_page42[2].id = hud_port_str("Texture sharpness"); k_page42[2].value = rnd_aniso_max() < 2 ? ns : d->aniso > 1 ? (int)hud_port_str(b) : (int)hud_port_str("Original");
+    k_page42[3].id = hud_port_str("Edge smoothing");    k_page42[3].value = !postfx_smaa_supported() ? ns : d->smaa ? (int)hud_port_str(k_q[d->smaa]) : 134;
+    snprintf(b, sizeof b, "%dx", d->msaa);
+    k_page42[4].id = hud_port_str("Multisampling");     k_page42[4].value = postfx_msaa_max() < 2 ? ns : d->msaa ? (int)hud_port_str(b) : 134;
+}
+static int gfx_round(const int *list, int n, int max, int cur, int dir)   /* the next / previous entry of list up to max, round */
+{
+    int m = 0; while (m < n && list[m] <= max) m++; if (m < 2) return cur;
+    int i = 0; while (i < m && list[i] != cur) i++;
+    return list[i == m ? 0 : (i + dir + m) % m];
+}
+static void gfx_step(int item, int dir)
+{
+    Display *d = &M.disp;
+    switch (item) {
+    case 1: if (gtao_supported()) d->ao ^= 1; break;
+    case 2: d->aniso = gfx_round(k_gfx_aniso, 5, rnd_aniso_max(), d->aniso, dir); break;
+    case 3: if (postfx_smaa_supported()) d->smaa = (d->smaa + dir + 5) % 5; break;
+    case 4: d->msaa = gfx_round(k_gfx_msaa, 4, postfx_msaa_max(), d->msaa, dir); break;
     }
 }
 /* port page 0x41 "Controls" (PORT EXTRA, docs/INPUT.md 6.2): a choice of device, a row per action with its keys or buttons,
@@ -1125,8 +1170,8 @@ static const MenuItem *menu_items(int page, int *n, float *yfrac)
     switch (page) {
     case 0: PG(k_page0, 0.7f)  case 1: PG(k_page1, 0.55f)  case 6: PG(k_page6, 0.4f)  case 7: PG(k_page7, 0.4f)
     case 8: PG(k_page8, 0.4f)  case 9: PG(k_page9, 0.4f)   case 0xa: PG(k_pagea, 0.4f) case 0x17: PG(k_page17, 0.4f)
-    case 0x18: PG(k_page18, 0.05f) case 0x19: PG(k_page19, 0.05f) case 0x1b: PG(k_page1b, 0.33f) case 0x1c: PG(k_page1c, 0.55f)
-    case 0x40: PG(k_page40, 0.25f) case 0x41: PG(k_page41, 0.03f)
+    case 0x18: PG(k_page18, 0.05f) case 0x19: PG(k_page19, 0.05f) case 0x1b: PG(k_page1b, 0.17f) case 0x1c: PG(k_page1c, 0.55f)
+    case 0x40: PG(k_page40, 0.25f) case 0x41: PG(k_page41, 0.03f) case 0x42: PG(k_page42, 0.25f)
     }
     #undef PG
     *n = 0; *yfrac = 0; return NULL;
@@ -1375,8 +1420,9 @@ static void menu_enter(int page)
     case 0x1b:                                                         /* 0x460240: the cursor on "Sound FX volume", the values backed up */
         M.opt_bak[0] = g_opt.sfx; M.opt_bak[1] = g_opt.music; M.opt_bak[2] = g_opt.vib;
         k_page1b[1].value = g_opt.sfx; k_page1b[2].value = g_opt.music; k_page1b[3].value = g_opt.vib; M.sel = 1;
-        k_page1b[5].id = hud_port_str("Display"); k_page1b[6].id = hud_port_str("Controls"); break;   /* port extras */
+        k_page1b[5].id = hud_port_str("Display"); k_page1b[6].id = hud_port_str("Graphics"); k_page1b[7].id = hud_port_str("Controls"); break;   /* port extras */
     case 0x40: M.disp = g_dnow; disp_items(); M.sel = 1; break;        /* port page: the cursor on the first choice */
+    case 0x42: M.disp = g_dnow; gfx_items(); M.sel = 1; break;
     case 0x41: g_ctl.dev = g_in.pad.kind != PADK_NONE; g_ctl.cap = 0;  /* port page: the pads when one is there */
         memcpy(g_ctl.bak, g_in.bind, sizeof g_ctl.bak); memcpy(g_ctl.pbak, g_in.pbind, sizeof g_ctl.pbak); g_ctl.bak_mode = g_in.mode; g_ctl.bak_cfg = g_in.have_cfg;
         g_ctl.bak_speed = g_cam_speed; ctl_items(); M.sel = 1; break;
@@ -1530,13 +1576,20 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
         }
         if (k->ok && M.sel == 4) { opt_write(); menu_back_to_level_menu(); }                          /* Continue keeps the values */
         else if (k->ok && M.sel == 5) menu_enter(0x40);                                                /* port extra: the Display page */
-        else if (k->ok && M.sel == 6) menu_enter(0x41);                                                /* port extra: the Controls page */
+        else if (k->ok && M.sel == 6) menu_enter(0x42);                                                /* port extra: the Graphics page */
+        else if (k->ok && M.sel == 7) menu_enter(0x41);                                                /* port extra: the Controls page */
         else if (k->back) { g_opt.sfx = M.opt_bak[0]; g_opt.music = M.opt_bak[1]; g_opt.vib = M.opt_bak[2]; opt_apply(); menu_back_to_level_menu(); }   /* 0x4602a0 */
         break; }
     case 0x40:                                                         /* port page (docs/DISPLAY.md 4): left/right change a choice, Continue applies + saves, back drops the edit */
         if ((k->right || k->left) && M.sel >= 1 && M.sel <= 5) { disp_step(M.sel, k->right ? 1 : -1); disp_items(); hud_menu_blink(0.25f); }
         if (k->ok && M.sel == 6) { g_disp = g_dnow = M.disp; g_disp_dirty = 1; opt_write(); }
         if ((k->ok && M.sel == 6) || k->back) { M.page = 0x1b; M.sel = 5; M.delay = 0; hud_menu_blink(0); }   /* back to Options on "Display", its backups kept */
+        break;
+    case 0x42:                                                         /* port page "Graphics": as the Display page; Continue applies at once (no window change) */
+        if ((k->right || k->left) && M.sel >= 1 && M.sel <= 4) { gfx_step(M.sel, k->right ? 1 : -1); gfx_items(); hud_menu_blink(0.25f); }
+        if (k->ok && M.sel == 5) { g_dnow.ao = M.disp.ao; g_dnow.aniso = M.disp.aniso; g_dnow.smaa = M.disp.smaa; g_dnow.msaa = M.disp.msaa;
+            g_disp.ao = g_dnow.ao; g_disp.aniso = g_dnow.aniso; g_disp.smaa = g_dnow.smaa; g_disp.msaa = g_dnow.msaa; gfx_apply(); opt_write(); }
+        if ((k->ok && M.sel == 5) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
         break;
     case 0x41:                                                         /* port page "Controls": the capture itself runs in ctl_capture */
         if ((k->right || k->left) && M.sel == 1) { g_ctl.dev ^= 1; ctl_items(); hud_menu_blink(0.25f); }
@@ -1551,7 +1604,7 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
             opt_write();
         }
         if (k->back) { memcpy(g_in.bind, g_ctl.bak, sizeof g_ctl.bak); memcpy(g_in.pbind, g_ctl.pbak, sizeof g_ctl.pbak); g_in.mode = g_ctl.bak_mode; g_in.have_cfg = g_ctl.bak_cfg; g_cam_speed = g_ctl.bak_speed; }
-        if ((k->ok && M.sel == 15) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
+        if ((k->ok && M.sel == 15) || k->back) { M.page = 0x1b; M.sel = 7; M.delay = 0; hud_menu_blink(0); }
         break;
     case 3: if (!M.p.lock) carousel_update(k, dt); break;
     case 4: if (!M.p.lock && k->back) { panel_close(0, 24); panel_iris(0, 0); } break;   /* 0x45bb30 -> 0x45bb40: iris +0x30 = 0 -> 0; confirm is vt[19] = ret */
@@ -1593,8 +1646,8 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
 }
 
 /* table 0x405af8: the half-black backdrop and whether the world stands still */
-static int menu_overlay(int page) { return page == 7 || page == 0xa || page == 0xb || page == 0xc || page == 0xe || page == 6 || page == 8 || page == 9 || page == 0x17 || (g_level != 0 && ((page >= 0x18 && page <= 0x1c) || page == 0x40 || page == 0x41)); }   /* 0x40 / 0x41: port pages, as 0x1b */
-static int menu_pauses_world(void) { return g_level != 0 && ((M.page >= 0x18 && M.page <= 0x1c) || M.page == 0x40 || M.page == 0x20 || M.page == 0x1d); }   /* 0x20: the credits level stands still; 0x1d GAME OVER (table 0x405af8 = 0) */
+static int menu_overlay(int page) { return page == 7 || page == 0xa || page == 0xb || page == 0xc || page == 0xe || page == 6 || page == 8 || page == 9 || page == 0x17 || (g_level != 0 && ((page >= 0x18 && page <= 0x1c) || page == 0x40 || page == 0x41 || page == 0x42)); }   /* 0x40..0x42: port pages, as 0x1b */
+static int menu_pauses_world(void) { return g_level != 0 && ((M.page >= 0x18 && M.page <= 0x1c) || M.page == 0x40 || M.page == 0x42 || M.page == 0x20 || M.page == 0x1d); }   /* 0x20: the credits level stands still; 0x1d GAME OVER (table 0x405af8 = 0) */
 
 /* the page layer of a frame: items, then the iris, then the logo (docs/TITLE.md 5.4) */
 static void menu_draw(float dt)
@@ -3862,15 +3915,20 @@ int main(int argc, char **argv)
     setup_import(dir);                                                                 /* the Setup keys woodyre.cfg lacks: from Woody.cfg (docs/SETUP.md) */
     {   /* the display that runs: the cfg's, but a screenshot run keeps the fixed default (1280x800 window, wide, vsync) whatever the
          * cfg says; the command line and WOODY_VSYNC / WOODY_FPSCAP override both */
-        static const Display def = { 1, 1280, 800, 0, 1, 0 };
+        static const Display def = { 1, 1280, 800, 0, 1, 0, 0, 1, 0, 0 };
         g_dnow = shot_path || wenv("WOODY_SHOTSEQ") || wenv("WOODY_LOGOSHOT") ? def : g_disp;
         if (res_w) { g_dnow.w = res_w; g_dnow.h = res_h; }
         if (full_arg >= 0) g_dnow.full = full_arg;
         if (wide_arg >= 0) g_dnow.wide = wide_arg;
         if (wenv("WOODY_VSYNC")) g_dnow.vsync = atoi(wenv("WOODY_VSYNC")) != 0;
         if (wenv("WOODY_FPSCAP")) g_dnow.cap = atoi(wenv("WOODY_FPSCAP")) < 0 ? 0 : atoi(wenv("WOODY_FPSCAP"));
+        if (wenv("WOODY_AO")) g_dnow.ao = atoi(wenv("WOODY_AO")) != 0;
+        if (wenv("WOODY_ANISO")) g_dnow.aniso = atoi(wenv("WOODY_ANISO")) < 1 ? 1 : atoi(wenv("WOODY_ANISO"));
+        if (wenv("WOODY_SMAA")) g_dnow.smaa = atoi(wenv("WOODY_SMAA")) < 0 ? 0 : atoi(wenv("WOODY_SMAA")) > 4 ? 4 : atoi(wenv("WOODY_SMAA"));
+        if (wenv("WOODY_MSAA")) g_dnow.msaa = atoi(wenv("WOODY_MSAA")) < 2 ? 0 : atoi(wenv("WOODY_MSAA"));
     }
     Window win; if (win_open(&win, "WoodyRE", 1280, 800)) return 1;
+    gfx_apply();
     if (g_dnow.full || g_dnow.w != 1280 || g_dnow.h != 800) disp_apply(&win);
     else { win_vsync(g_dnow.vsync); if (g_dnow.cap > 0) timeBeginPeriod(1); }
     if (g_stats.have) g_stats.level = g_prev_level;                                    /* --stats belongs to the level --prev says we came from */
@@ -4158,6 +4216,7 @@ int main(int argc, char **argv)
         { Vec3 cr = cam_right(&cam); audio_listener(&cam.pos.x, &cr.x); audio_pause(bb_active() ? dbg_paused || M.page >= 0 : paused); }   /* the listener is the camera (mgr+0x28); the SoundFx queue runs in BlackBox mode (0x401eb1: app+0xe4) */
         int vx, vy, vw, vh; disp_view(&win, &vx, &vy, &vw, &vh);                     /* port extra (docs/DISPLAY.md 3): the 3D view box, 4:3 or the whole window */
         Window view = win; view.vx = vx; view.vy = vy; view.width = vw; view.height = vh;
+        postfx_begin(win.width, win.height);                                        /* port extra (postfx.c): MSAA / SMAA draw the 3D picture into an own target */
         rnd_frame(&L.rnd, &view, &cam, g_now);                 /* the same game clock as the instances: a texture override (message 16) starts on it */
         audio_update(snd_owner_active);                                             /* 0x401ee7: after the draw, with this frame's instance list */
         {   /* 2D layer (docs/HUD_TEXT.md 5.4): HUD, then the text box, then the fades. No HUD in menus, BlackBox, cinematics and the fall death camera (0x401e19) */
@@ -4213,6 +4272,7 @@ int main(int argc, char **argv)
                 hud_world_sprites_end();
                 rnd_sorted(&L.rnd);                                           /* 0x428d00: fade list, glow faces and these sprites in depth buckets (docs/MODEL_RENDER.md 10) */
             }
+            postfx_end();                                                /* the 3D picture into the window (resolved, smoothed); the 2D layer stays sharp */
             if (g_black_frame || (g_sfade.hold && !(g_sfade.rest > 0))) { rnd_fade(0); g_black_frame = 0; }                /* 1152 blanks the 3D picture only: the House intro shows its text on black */
             if (L.have_player && now - t0 >= pick_at - 0.5) {            /* set the counters a few frames early, so the HUD sees them change like it would in play */
                 if (pre_bonus >= 0) { L.player.bonus_count = pre_bonus; pre_bonus = -1; }

@@ -114,6 +114,10 @@ void rnd_set_race(Renderer *r, const Trajectory *path);
  * of its sector's chain (0x407790), in the order of the messages; the chains take that over on the next list */
 void rnd_note_link(Instance *in);
 void rnd_set_sky(Renderer *r, const uint32_t tex[5]);   /* level bank images 3,0,1,2,4 replace the group's own frames when the bank has >= 5 images (0x5e8670) */
+/* texture sharpness (PORT EXTRA, docs/DISPLAY.md 5): anisotropic filtering of the level textures, 1 = off (the original);
+ * rnd_aniso_max = the most this GL can do (0 = none, needs the GL context) */
+void rnd_set_aniso(int n);
+int  rnd_aniso_max(void);
 int  rnd_screenshot(const Window *w, const char *path);   /* binary PPM of the current back buffer */
 /* an HNM film frame (RGB565, docs/HNM.md) over the whole window, 4:3 kept with black bars; px NULL frees the texture */
 void rnd_film_frame(const Window *w, const uint16_t *px, int width, int height);

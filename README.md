@@ -90,8 +90,10 @@ the original (WinMM). On Linux every pad SDL2 knows works, the Steam Deck's own 
 ### Settings and files
 Everything the game writes stays next to `WoodyRE.exe` (or in `%LOCALAPPDATA%\WoodyRE` when that folder is read-only, such
 as `Program Files`, or a temporary one, such as when the exe is started from inside the zip):
-- `woodyre.cfg`: the options (sound volumes, rumble strength and the Display page: resolution, window or fullscreen, 4:3
-  or wide, vsync, frame cap, `logos=0` to skip the intro films, `pad_deadzone=30` for the stick dead zone in percent).
+- `woodyre.cfg`: the options (sound volumes, rumble strength, the Display page: resolution, window or fullscreen, 4:3
+  or wide, vsync, frame cap; the Graphics page: ambient occlusion, texture sharpness, edge smoothing (SMAA) and
+  multisampling (MSAA), all off by default; `logos=0` to skip the intro films, `pad_deadzone=30` for the stick dead zone
+  in percent).
 - `woodyre.sav`: the four save slots, in the original `Woody.sav` layout. An original `Woody.sav` placed next to the exe
   is imported once.
 - `woodyre.log`: the engine log, useful in bug reports.
@@ -136,7 +138,9 @@ or `pip install ziglang` is used when present, otherwise `build.bat` downloads t
 ## License
 The code in this repository is licensed under the [GNU General Public License v3.0](LICENSE) or later. This does not
 cover the original game, its data or its trademarks, which belong to their owners and are not part of this project.
-`src/stb/` holds Sean Barrett's stb_image and stb_image_write (public domain or MIT, see the end of each file). `android/app/src/main/java/org/libsdl/` is SDL's Android code (SDL 2.32.10, zlib license); the
+`src/stb/` holds Sean Barrett's stb_image and stb_image_write (public domain or MIT, see the end of each file).
+`src/smaa/smaa.h` is SMAA by Jorge Jimenez et al. (MIT, the licence is at its top), made from github.com/iryoku/smaa by
+`tools/smaa_embed.py`. `android/app/src/main/java/org/libsdl/` is SDL's Android code (SDL 2.32.10, zlib license); the
 Android build downloads SDL itself.
 
 # Development and reverse engineering
@@ -192,7 +196,7 @@ build.bat dev                                    # out/woody.exe (the source lis
 ./out/woody.exe extract/Data                     # without a level: the three logo films (each press of Esc / Enter / Space skips one; --nologo, or logos=0 in woodyre.cfg, plays none), then the title screen (House, level 0); Enter starts, then the hub
 ./out/woody.exe extract/Data W1A                 # arrow keys/WASD walk (relative to camera), space jumps, Enter (or V) looks around (release toggles; arrows turn the view; the mouse only with WOODY_LOOKMOUSE=1, the original never polls it; docs/PERSO_LOOK.md), F5 free camera (then WASD + right mouse button), [ ] animation, Tab instance, F1-F4 toggles (F4 = culling)
 ./out/woody.exe extract/Data W1A --shot out/s.ppm 3   # screenshot after 3 s and stop
-./out/woody.exe extract/Data W1A --res 1920x1080 --aspect 4:3   # display (port extras, docs/DISPLAY.md): --res WxH, --windowed / --fullscreen, --aspect 4:3|wide; WOODY_VSYNC=0/1, WOODY_FPSCAP=N; F11 = fullscreen; Options > Display saves them in woodyre.cfg (which also has reverse_stereo= / film_sound=, docs/SETUP.md; WOODY_REVSTEREO=0/1)
+./out/woody.exe extract/Data W1A --res 1920x1080 --aspect 4:3   # display (port extras, docs/DISPLAY.md): --res WxH, --windowed / --fullscreen, --aspect 4:3|wide; WOODY_VSYNC=0/1, WOODY_FPSCAP=N; Graphics page: WOODY_AO=0/1, WOODY_ANISO=N, WOODY_SMAA=0..4, WOODY_MSAA=0/2/4/8; F11 = fullscreen; Options > Display saves them in woodyre.cfg (which also has reverse_stereo= / film_sound=, docs/SETUP.md; WOODY_REVSTEREO=0/1)
 ./out/woody.exe extract/Data WWS --prev W1A --stats 12 12 25 20 245   # results screen: back from W1A with these stats
 ./out/woody.exe extract/Data W1A --cam 537 -1800 -2450 0 -10   # camera: x y z yaw pitch (degrees)
 python -m ziglang cc -std=c99 -O2 -o out/leveltest.exe src/level.c src/leveltest.c && ./out/leveltest.exe extract/Data   # parser test, 28 levels

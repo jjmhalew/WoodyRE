@@ -14,7 +14,7 @@ VERSION=$(sed -n 's/^FILEVERSION *\([0-9]*\),\([0-9]*\),\([0-9]*\).*/\1.\2.\3/p'
 PORT=$DEVKITPRO/portlibs/switch
 PATH=$DEVKITPRO/devkitA64/bin:$DEVKITPRO/tools/bin:$PATH
 SRC="src/level.c src/render_gl.c src/main_engine.c src/player.c src/instance.c src/enemy.c src/boss.c src/water.c src/storm.c
-     src/ekovm.c src/audio.c src/hud.c src/hnm.c src/ambient.c src/blackbox.c src/texpack.c
+     src/ekovm.c src/audio.c src/hud.c src/hnm.c src/ambient.c src/blackbox.c src/texpack.c src/gtao.c src/postfx.c
      src/plat_sdl.c src/pad_sdl.c src/datasetup_posix.c src/touch.c src/gles/gles2.c"
 ARCH="-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE"
 # src/gles first on the include path: its GL/gl.h puts the engine's fixed-function OpenGL on OpenGL ES 2 / 3 (as on Android);
