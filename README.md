@@ -135,6 +135,11 @@ or `pip install ziglang` is used when present, otherwise `build.bat` downloads t
 - `make_standalone.bat`: packs `WoodyRE.exe` and **your** game files from `data\` into a single
   `WoodyRE-standalone.exe` that unpacks itself to `%LOCALAPPDATA%\WoodyRE`. It contains the game's data, so it is
   for your own use only: never share or upload it.
+- `make_android_bundle.bat`: the same for Android: the APK of a release (or of your own build) and **your** ISO image of
+  the CD in a single `WoodyRE-bundle.apk`, which unpacks the image at its first start without asking for it. Drag both
+  files onto the .bat, or put them next to it. It is signed with a key of your own (made once, in
+  `%LOCALAPPDATA%\WoodyRE\android-bundle.key`), so it does not install over a WoodyRE from the Releases page: uninstall
+  that first. Also for your own devices only.
 
 ## License
 The code in this repository is licensed under the [GNU General Public License v3.0](LICENSE) or later. This does not

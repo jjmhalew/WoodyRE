@@ -217,6 +217,7 @@ const char *data_find(void)
  * permission needed), filled once from an ISO image of the CD or a folder with a copy of it that the user picks in the
  * system's file picker (WoodyActivity.java); an ISO is read here, through the file descriptor the picker hands out. */
 #include <jni.h>
+#include <android/asset_manager_jni.h>
 
 static int home_dir(char *d)
 {
@@ -247,6 +248,24 @@ static void show_progress(const char *text)                 /* WoodyActivity.pro
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     (*env)->DeleteLocalRef(env, c); (*env)->DeleteLocalRef(env, act);
 }
+/* an APK from make_android_bundle.bat (tools/native/apkbundle.c) carries the ISO image as assets/game.iso, stored as it is:
+ * its bytes lie in the installed APK file from *base on. Returns a file descriptor of that file (the caller closes it), or
+ * -1 for an APK without one */
+static int bundled_iso(unsigned long long *base)
+{
+    JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv(); jobject act = (jobject)SDL_AndroidGetActivity(); int fd = -1;
+    if (!env || !act) return -1;
+    jclass c = (*env)->GetObjectClass(env, act);
+    jmethodID m = (*env)->GetMethodID(env, c, "getAssets", "()Landroid/content/res/AssetManager;");
+    jobject jam = m ? (*env)->CallObjectMethod(env, act, m) : NULL;
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); jam = NULL; }
+    AAssetManager *am = jam ? AAssetManager_fromJava(env, jam) : NULL;
+    AAsset *a = am ? AAssetManager_open(am, "game.iso", AASSET_MODE_RANDOM) : NULL;
+    if (a) { off64_t start = 0, len = 0; fd = AAsset_openFileDescriptor64(a, &start, &len); *base = (unsigned long long)start; AAsset_close(a); }
+    if (jam) (*env)->DeleteLocalRef(env, jam);
+    (*env)->DeleteLocalRef(env, c); (*env)->DeleteLocalRef(env, act);
+    return fd;
+}
 #else
 /* ---- Switch: sdmc:/switch/woodyre on the SD card (next to woodyre.nro), with the CD files in data/ or an ISO image of the
  * CD that is unpacked into data/ at the first start. The unpacking shows its progress on libnx's text console and then
@@ -274,9 +293,11 @@ static void progress_pct(const char *what, unsigned long long done, int *last)
 
 /* ---- ISO 9660 (ECMA-119) with the Joliet names when there are some: just enough to find the manifest's files ---- */
 typedef struct { int fd; uint32_t root_lba, root_len; int joliet; } Iso;
+static unsigned long long g_iso_base;                       /* where the image starts in its file (Android: inside the APK) */
 static uint32_t le32(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static int iso_pread(int fd, void *b, size_t n, unsigned long long off)
 {
+    off += g_iso_base;
 #ifdef __SWITCH__                                           /* libnx has no pread */
     if (lseek(fd, (off_t)off, SEEK_SET) < 0) return -1;
     for (size_t got = 0; got < n; ) { ssize_t k = read(fd, (char *)b + got, n - got); if (k <= 0) return -1; got += (size_t)k; }
@@ -396,6 +417,11 @@ const char *data_find(void)
     char home[PMAX], p[PMAX + 16], m[3 * PMAX];
     if (!home_dir(home)) { plat_message("No storage for the game files.", 1); return NULL; }
     snprintf(p, sizeof p, "%s/data", home); if (cd_layout(p)) return enter(home, "data/Data");
+    unsigned long long base = 0; int fd = bundled_iso(&base);
+    if (fd >= 0) {                                          /* the ISO image inside the APK: no questions */
+        mkdir(p, 0755); g_iso_base = base; int bad = iso_copy(fd, home); g_iso_base = 0; close(fd);
+        if (bad >= 0 && cd_layout(p)) return enter(home, "data/Data");
+    }
     for (;;) {
         snprintf(m, sizeof m, "WoodyRE needs the files of the original game CD-ROM:\n"
                               "Woody Woodpecker: Escape from Buzz Buzzard Park (PC; the English, Brazilian, Polish, Spanish or Russian CD).\n\n"

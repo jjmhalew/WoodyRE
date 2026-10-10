@@ -3,6 +3,7 @@ rem build.bat - builds WoodyRE from source on Windows 10/11; nothing to install 
 rem   build.bat             WoodyRE.exe, the game (start it, it asks for the CD the first time)
 rem   build.bat dev         out\woody.exe, the developer build (console log, same engine)
 rem   build.bat standalone  WoodyRE-standalone.exe: WoodyRE.exe + YOUR game files in one exe, for your own use only
+rem   build.bat apkbundle   only build\apkbundle.exe, the tool of make_android_bundle.bat
 rem The C compiler is Zig (ziglang.org): a zig on PATH or "pip install ziglang" is used when there, otherwise the official
 rem Windows build is downloaded once into tools\zig and checked against its SHA-256.
 setlocal
@@ -19,6 +20,11 @@ set "CPU=-target x86_64-windows-gnu -mcpu=baseline"
 
 call :find_zig || goto :fail
 
+if /i "%~1"=="apkbundle" (
+    if not exist build mkdir build
+    %ZIG% cc -std=c99 -O2 %CPU% -o build\apkbundle.exe tools\native\apkbundle.c -lbcrypt -lshell32 || goto :fail
+    exit /b 0
+)
 if /i "%~1"=="dev" (
     if not exist out mkdir out
     echo Building out\woody.exe ^(developer build^)...
