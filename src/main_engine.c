@@ -490,6 +490,13 @@ static char g_bind_cfg[32][100]; static int g_nbind_cfg;   /* woodyre.cfg key_* 
 static void ctl_write(FILE *f);
 static int g_cam_speed = 100;                           /* woodyre.cfg camera_speed= (percent): how fast the right stick turns / raises the follow camera (PORT EXTRA, Controls page) */
 static const int k_cam_speeds[] = { 25, 50, 75, 100, 150, 200 };
+/* PORT EXTRAS of the Gameplay page 0x43 (docs/GAMEPLAY.md), all off = the original game. woodyre.cfg skip_cutscenes=,
+ * soft_hazards= (lasers, lightning and blasts take a heart instead of a life), enemy_delay= (tenths of a second before an
+ * enemy that noticed Woody attacks), gameover_lives= (lives a slot loaded after a game over has at least, 0 = as saved) and
+ * gameover_pending= (a game over happened and no slot was loaded since) */
+typedef struct { int skip, soft, delay, lives; } Gameplay;
+static Gameplay g_gp; static int g_go_pending, g_skip;
+static const int k_gp_delay[] = { 0, 5, 10, 15 }, k_gp_lives[] = { 0, 3, 5, 9 };
 static int g_pad_dz = 30;                               /* woodyre.cfg pad_deadzone= (percent): the stick dead zone of the pads (PORT EXTRA), default the original's 30 % (0x467a80) */
 /* ---- display (docs/DISPLAY.md; everything here is a PORT EXTRA). The original runs exclusive fullscreen at the Woody.cfg mode
  * (Detect's list, default 640x480), always 4:3 in the layout, and paces itself only by Flip(DDFLIP_WAIT) = vsync (0x47ee90);
@@ -522,6 +529,10 @@ static void opt_read(void)
         else if (sscanf(line, "msaa=%d", &v) == 1) g_disp.msaa = v < 2 ? 0 : v > 8 ? 8 : v;
         else if (sscanf(line, "pad_deadzone=%d", &v) == 1) g_pad_dz = v < 0 ? 0 : v > 90 ? 90 : v;
         else if (sscanf(line, "camera_speed=%d", &v) == 1) g_cam_speed = v < 10 ? 10 : v > 300 ? 300 : v;
+        else if (sscanf(line, "skip_cutscenes=%d", &v) == 1) g_gp.skip = v != 0; else if (sscanf(line, "soft_hazards=%d", &v) == 1) g_gp.soft = v != 0;
+        else if (sscanf(line, "enemy_delay=%d", &v) == 1) g_gp.delay = v < 0 ? 0 : v > 30 ? 30 : v;
+        else if (sscanf(line, "gameover_lives=%d", &v) == 1) g_gp.lives = v < 0 ? 0 : v > 9 ? 9 : v;
+        else if (sscanf(line, "gameover_pending=%d", &v) == 1) g_go_pending = v != 0;
         else if ((!strncmp(line, "key_", 4) || !strncmp(line, "pad_", 4)) && strchr(line, '=') && g_nbind_cfg < 32) {
             line[strcspn(line, "\r\n")] = 0; snprintf(g_bind_cfg[g_nbind_cfg++], sizeof g_bind_cfg[0], "%s", line); }
         else if (sscanf(line, "fpscap=%d", &v) == 1) g_disp.cap = v < 0 ? 0 : v > 1000 ? 1000 : v; } fclose(f); }
@@ -534,6 +545,7 @@ static void opt_write(void)
     fprintf(f, "aspect=%s\nwindow=%dx%d\nfullscreen=%d\nvsync=%d\nfpscap=%d\n", g_disp.wide ? "wide" : "4:3", g_disp.w, g_disp.h, g_disp.full, g_disp.vsync, g_disp.cap);
     fprintf(f, "ao=%d\naniso=%d\nsmaa=%d\nmsaa=%d\n", g_disp.ao, g_disp.aniso, g_disp.smaa, g_disp.msaa);
     fprintf(f, "reverse_stereo=%d\nfilm_sound=%d\nlogos=%d\npad_deadzone=%d\ncamera_speed=%d\n", g_setup.rev > 0, g_setup.film != 0, g_logos, g_pad_dz, g_cam_speed);
+    fprintf(f, "skip_cutscenes=%d\nsoft_hazards=%d\nenemy_delay=%d\ngameover_lives=%d\ngameover_pending=%d\n", g_gp.skip, g_gp.soft, g_gp.delay, g_gp.lives, g_go_pending);
     ctl_write(f);
     fclose(f);
 }
@@ -1039,7 +1051,7 @@ static const MenuItem k_page17[] = { {61,2}, {1,2}, {5,1}, {6,1} };   /* 0x4b5c9
 static const MenuItem k_page18[] = { {4,1}, {36,1}, {2,1} };
 static const MenuItem k_page19[] = { {4,1}, {19,1}, {36,1}, {2,1} };   /* 0x4b5d18: Continue (5), Start again (18), Options (6), Quit (7) */
 static const MenuItem k_page1c[] = { {3,2}, {5,1}, {6,1} };
-static MenuItem k_page1b[] = { {36,2}, {38,0x10}, {39,0x10}, {132,0x10}, {4,1}, {0,1}, {0,1}, {0,1} };   /* items 5 "Display", 6 "Graphics" and 7 "Controls": port extras, ids set on enter (the page starts at 0.17 instead of 0.4 to fit them) */
+static MenuItem k_page1b[] = { {36,2}, {38,0x10}, {39,0x10}, {132,0x10}, {4,1}, {0,1}, {0,1}, {0,1}, {0,1} };   /* items 5 "Display", 6 "Graphics", 7 "Controls" and 8 "Gameplay": port extras, ids set on enter (the page starts at 0.09 instead of 0.4 to fit them) */
 /* port page 0x40 "Display" (docs/DISPLAY.md 4), the list class of 0x1b with choices (flag 0x100): ids and values are
  * port strings or Common 133 "On" / 134 "Off", filled in by disp_items */
 static MenuItem k_page40[7] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
@@ -1095,6 +1107,30 @@ static void gfx_step(int item, int dir)
     case 2: d->aniso = gfx_round(k_gfx_aniso, 5, rnd_aniso_max(), d->aniso, dir); break;
     case 3: if (postfx_smaa_supported()) d->smaa = (d->smaa + dir + 5) % 5; break;
     case 4: d->msaa = gfx_round(k_gfx_msaa, 4, postfx_msaa_max(), d->msaa, dir); break;
+    }
+}
+/* port page 0x43 "Gameplay" (PORT EXTRA, docs/GAMEPLAY.md), the same list class; every first choice is the original game */
+static MenuItem k_page43[6] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
+static Gameplay g_gp_edit;
+static void gp_items(void)
+{
+    const Gameplay *g = &g_gp_edit; char b[24];
+    k_page43[0].id = hud_port_str("Gameplay");
+    k_page43[1].id = hud_port_str("Skip cutscenes:");     k_page43[1].value = g->skip ? 133 : 134;
+    k_page43[2].id = hud_port_str("Lasers and blasts:");  k_page43[2].value = (int)hud_port_str(g->soft ? "Cost a heart" : "Cost a life");
+    snprintf(b, sizeof b, "%d.%d s", g->delay / 10, g->delay % 10);
+    k_page43[3].id = hud_port_str("Enemy first attack:"); k_page43[3].value = g->delay ? (int)hud_port_str(b) : (int)hud_port_str("At once");
+    snprintf(b, sizeof b, "%d", g->lives);
+    k_page43[4].id = hud_port_str("Lives after game over:"); k_page43[4].value = g->lives ? (int)hud_port_str(b) : (int)hud_port_str("As saved");
+}
+static void gp_step(int item, int dir)
+{
+    Gameplay *g = &g_gp_edit;
+    switch (item) {
+    case 1: g->skip ^= 1; break;
+    case 2: g->soft ^= 1; break;
+    case 3: g->delay = gfx_round(k_gp_delay, 4, 99, g->delay, dir); break;
+    case 4: g->lives = gfx_round(k_gp_lives, 4, 99, g->lives, dir); break;
     }
 }
 /* port page 0x41 "Controls" (PORT EXTRA, docs/INPUT.md 6.2): a choice of device, a row per action with its keys or buttons,
@@ -1173,8 +1209,8 @@ static const MenuItem *menu_items(int page, int *n, float *yfrac)
     switch (page) {
     case 0: PG(k_page0, 0.7f)  case 1: PG(k_page1, 0.55f)  case 6: PG(k_page6, 0.4f)  case 7: PG(k_page7, 0.4f)
     case 8: PG(k_page8, 0.4f)  case 9: PG(k_page9, 0.4f)   case 0xa: PG(k_pagea, 0.4f) case 0x17: PG(k_page17, 0.4f)
-    case 0x18: PG(k_page18, 0.05f) case 0x19: PG(k_page19, 0.05f) case 0x1b: PG(k_page1b, 0.17f) case 0x1c: PG(k_page1c, 0.55f)
-    case 0x40: PG(k_page40, 0.25f) case 0x41: PG(k_page41, 0.03f) case 0x42: PG(k_page42, 0.25f)
+    case 0x18: PG(k_page18, 0.05f) case 0x19: PG(k_page19, 0.05f) case 0x1b: PG(k_page1b, 0.09f) case 0x1c: PG(k_page1c, 0.55f)
+    case 0x40: PG(k_page40, 0.25f) case 0x41: PG(k_page41, 0.03f) case 0x42: PG(k_page42, 0.25f) case 0x43: PG(k_page43, 0.25f)
     }
     #undef PG
     *n = 0; *yfrac = 0; return NULL;
@@ -1423,9 +1459,10 @@ static void menu_enter(int page)
     case 0x1b:                                                         /* 0x460240: the cursor on "Sound FX volume", the values backed up */
         M.opt_bak[0] = g_opt.sfx; M.opt_bak[1] = g_opt.music; M.opt_bak[2] = g_opt.vib;
         k_page1b[1].value = g_opt.sfx; k_page1b[2].value = g_opt.music; k_page1b[3].value = g_opt.vib; M.sel = 1;
-        k_page1b[5].id = hud_port_str("Display"); k_page1b[6].id = hud_port_str("Graphics"); k_page1b[7].id = hud_port_str("Controls"); break;   /* port extras */
+        k_page1b[5].id = hud_port_str("Display"); k_page1b[6].id = hud_port_str("Graphics"); k_page1b[7].id = hud_port_str("Controls"); k_page1b[8].id = hud_port_str("Gameplay"); break;   /* port extras */
     case 0x40: M.disp = g_dnow; disp_items(); M.sel = 1; break;        /* port page: the cursor on the first choice */
     case 0x42: M.disp = g_dnow; gfx_items(); M.sel = 1; break;
+    case 0x43: g_gp_edit = g_gp; gp_items(); M.sel = 1; break;
     case 0x41: g_ctl.dev = g_in.pad.kind != PADK_NONE; g_ctl.cap = 0;  /* port page: the pads when one is there */
         memcpy(g_ctl.bak, g_in.bind, sizeof g_ctl.bak); memcpy(g_ctl.pbak, g_in.pbind, sizeof g_ctl.pbak); g_ctl.bak_mode = g_in.mode; g_ctl.bak_cfg = g_in.have_cfg;
         g_ctl.bak_speed = g_cam_speed; ctl_items(); M.sel = 1; break;
@@ -1501,6 +1538,9 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
             case 2:
                 if (r == 24) { menu_enter(1); return; }
                 {   int s = r - 10; g_save = g_file.slot[s];                                              /* 0x456df0, 0x4052db: the slot's own volumes too */
+                    if (g_go_pending) { g_go_pending = 0; opt_write();                                     /* PORT EXTRA: lives after a game over */
+                        for (int c = 0; c < 3 && g_gp.lives; c++) { printf("  LIVES after game over: character %d has %d, at least %d", c, g_save.chr[c].lives, g_gp.lives), puts("");
+                            if (g_save.chr[c].lives < g_gp.lives) g_save.chr[c].lives = g_gp.lives; } }
                     g_opt.music = g_file.music[s] > 100 ? 100 : (int)g_file.music[s]; g_opt.sfx = g_file.sfx[s] > 100 ? 100 : (int)g_file.sfx[s];   /* unsigned: a damaged slot cannot give a negative volume */
                     opt_apply(); car_reset(); menu_enter(3); }
                 return;
@@ -1581,6 +1621,7 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
         else if (k->ok && M.sel == 5) menu_enter(0x40);                                                /* port extra: the Display page */
         else if (k->ok && M.sel == 6) menu_enter(0x42);                                                /* port extra: the Graphics page */
         else if (k->ok && M.sel == 7) menu_enter(0x41);                                                /* port extra: the Controls page */
+        else if (k->ok && M.sel == 8) menu_enter(0x43);                                                /* port extra: the Gameplay page */
         else if (k->back) { g_opt.sfx = M.opt_bak[0]; g_opt.music = M.opt_bak[1]; g_opt.vib = M.opt_bak[2]; opt_apply(); menu_back_to_level_menu(); }   /* 0x4602a0 */
         break; }
     case 0x40:                                                         /* port page (docs/DISPLAY.md 4): left/right change a choice, Continue applies + saves, back drops the edit */
@@ -1593,6 +1634,11 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
         if (k->ok && M.sel == 5) { g_dnow.ao = M.disp.ao; g_dnow.aniso = M.disp.aniso; g_dnow.smaa = M.disp.smaa; g_dnow.msaa = M.disp.msaa;
             g_disp.ao = g_dnow.ao; g_disp.aniso = g_dnow.aniso; g_disp.smaa = g_dnow.smaa; g_disp.msaa = g_dnow.msaa; gfx_apply(); opt_write(); }
         if ((k->ok && M.sel == 5) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
+        break;
+    case 0x43:                                                         /* port page "Gameplay": as the Graphics page; Continue applies at once and saves */
+        if ((k->right || k->left) && M.sel >= 1 && M.sel <= 4) { gp_step(M.sel, k->right ? 1 : -1); gp_items(); hud_menu_blink(0.25f); }
+        if (k->ok && M.sel == 5) { g_gp = g_gp_edit; opt_write(); }
+        if ((k->ok && M.sel == 5) || k->back) { M.page = 0x1b; M.sel = 8; M.delay = 0; hud_menu_blink(0); }
         break;
     case 0x41:                                                         /* port page "Controls": the capture itself runs in ctl_capture */
         if ((k->right || k->left) && M.sel == 1) { g_ctl.dev ^= 1; ctl_items(); hud_menu_blink(0.25f); }
@@ -1634,6 +1680,7 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
     case 0x1d:                                                         /* GAME OVER: the draw 0x45bbd0 counts +0x14 down and sets +0xc = 1 every frame (no confirm), */
         if (M.go_t > 0 && (M.go_t -= dt) <= 0) {                       /* back gives 24, ignored; result 5 in the frame the timer crosses 0 -> handler 0x405796 */
             save_reset();                                              /* 0x44ffa0: the active save wiped in memory (9 lives, 3.0 health), Woody.sav is not written */
+            if (g_gp.lives) { g_go_pending = 1; opt_write(); }         /* PORT EXTRA (Gameplay page): the next slot loaded gets its lives topped up, also after a restart */
             request_level(0, 0.5f);                                    /* 0x405780: 0x404b60(0.5, 0, 0, 0) -> the title; the page stays up during the fade */
         }
         break;
@@ -1649,8 +1696,8 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
 }
 
 /* table 0x405af8: the half-black backdrop and whether the world stands still */
-static int menu_overlay(int page) { return page == 7 || page == 0xa || page == 0xb || page == 0xc || page == 0xe || page == 6 || page == 8 || page == 9 || page == 0x17 || (g_level != 0 && ((page >= 0x18 && page <= 0x1c) || page == 0x40 || page == 0x41 || page == 0x42)); }   /* 0x40..0x42: port pages, as 0x1b */
-static int menu_pauses_world(void) { return g_level != 0 && ((M.page >= 0x18 && M.page <= 0x1c) || M.page == 0x40 || M.page == 0x42 || M.page == 0x20 || M.page == 0x1d); }   /* 0x20: the credits level stands still; 0x1d GAME OVER (table 0x405af8 = 0) */
+static int menu_overlay(int page) { return page == 7 || page == 0xa || page == 0xb || page == 0xc || page == 0xe || page == 6 || page == 8 || page == 9 || page == 0x17 || (g_level != 0 && ((page >= 0x18 && page <= 0x1c) || page == 0x40 || page == 0x41 || page == 0x42 || page == 0x43)); }   /* 0x40..0x43: port pages, as 0x1b */
+static int menu_pauses_world(void) { return g_level != 0 && ((M.page >= 0x18 && M.page <= 0x1c) || M.page == 0x40 || M.page == 0x42 || M.page == 0x43 || M.page == 0x20 || M.page == 0x1d); }   /* 0x20: the credits level stands still; 0x1d GAME OVER (table 0x405af8 = 0) */
 
 /* the page layer of a frame: items, then the iris, then the logo (docs/TITLE.md 5.4) */
 static void menu_draw(float dt)
@@ -2692,6 +2739,8 @@ static void torch_update(float dt)                                           /* 
         }
     }
 }
+int game_soft_hazards(void) { return g_gp.soft; }                             /* Gameplay page (PORT EXTRA): lasers, lightning and blasts take a heart */
+float game_enemy_delay(void) { return g_gp.delay * 0.1f; }                  /* Gameplay page (PORT EXTRA): seconds before a noticing enemy attacks */
 int game_enemy_thinks(const Instance *inst)                                  /* Think 0x42b400 runs for the instances of this frame's list world+0x64 (rnd_instance_list) */
 {
     return !g_rnd || inst->listed;
@@ -3987,7 +4036,7 @@ int main(int argc, char **argv)
         }
         { static double cap = -1; if (cap < 0) cap = wenv("WOODY_FPS") ? atof(wenv("WOODY_FPS")) : 0;   /* WOODY_FPS=N: testing, frame-rate dependent code at N fps */
           if (cap > 0) while (win_time() - last < 1.0 / cap) Sleep(0);
-          else if (g_dnow.cap > 0) { double due = last + 1.0 / g_dnow.cap, tn; while ((tn = win_time()) < due) if (due - tn > 0.002) Sleep(1); } }   /* port extra: the frame cap of the Display page / WOODY_FPSCAP (the original has none) */
+          else if (g_dnow.cap > 0 && !g_skip) { double due = last + 1.0 / g_dnow.cap, tn; while ((tn = win_time()) < due) if (due - tn > 0.002) Sleep(1); } }   /* port extra: the frame cap of the Display page / WOODY_FPSCAP (the original has none) */
         if (win.keys[VK_F11] && !f11_prev) { g_dnow.full ^= 1; g_disp_dirty = 1; }   /* port extra: F11 = fullscreen / window for this run (the Display page saves it) */
         f11_prev = win.keys[VK_F11];
         if (g_disp_dirty) disp_apply(&win);
@@ -3995,6 +4044,7 @@ int main(int argc, char **argv)
         if (dt > 0.1f) dt = 0.1f;
         static double fixdt = -1; if (fixdt < 0) fixdt = wenv("WOODY_FIXDT") ? atof(wenv("WOODY_FIXDT")) : 0;   /* WOODY_FIXDT=N: testing, every frame advances 1/N s whatever */
         if (fixdt > 0) dt = (float)(1.0 / fixdt);                                       /* the wall clock says, so --shot frames repeat exactly (before/after diffs) */
+        if (g_skip) dt = 0.1f;                                                          /* a cutscene fast-forwards (Gameplay page) */
         audio_offline_advance(dt);                     /* no-op unless WOODY_AUDIODUMP + WOODY_FIXDT (video capture) */
         g_clock += dt; g_now = (float)g_clock; g_dt = dt;   /* 0x401880: everything (Perso timers, animations, the script VM) runs on this one clock, so a hitch cannot make script delays
                                                         * run ahead of the action timers - a door would then teleport while action 17 is still running and 0x44a650 refuses the move */
@@ -4039,6 +4089,13 @@ int main(int argc, char **argv)
             #undef REL
             for (int k = 0; k < 256; k++) key_prev[k] = win.keys[k];
         }
+        /* PORT EXTRA (Gameplay page, skip cutscenes): the pause key during a cinematic fast-forwards it - every frame advances the
+         * largest step the clock takes anyway (0.1 s), behind a black picture and without sound, until the scene hands back to the
+         * player. The scripts time their events on the game clock (DELAYs, CINEMATIC.md 7), so they all still happen in order. */
+        if (g_gp.skip && !g_skip && g_level != 0 && M.page < 0 && cin_running() && (mk.esc_prs || (wenv("WOODY_SKIPAT") && g_now >= atof(wenv("WOODY_SKIPAT"))))) {
+            g_skip = 1; audio_rtc(-1); audio_master(0, g_opt.music * 0.01f); win_vsync(0); printf("  CUTSCENE skipped at %.2f s", g_now), puts(""); mk.esc_prs = 0; }
+        if (g_skip && !cin_running()) { g_skip = 0; opt_apply(); win_vsync(g_dnow.vsync); }
+        if (g_skip) g_black_frame = 1;
         if (DBGKEY(VK_TAB) && !tab_prev && sel) {                                   /* next instance with animations */
             Instance *nxt = NULL; int found = 0;
             for (uint32_t mi = 0; mi < g_ins.nmodels && !nxt; mi++) for (uint32_t k = 0; k < g_ins.models[mi].ninstances; k++) {

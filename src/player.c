@@ -1263,6 +1263,13 @@ void player_kill(Player *p, int kind)                                   /* vt[38
         return;
     }
     if (kind == 2 || kind == 9) rumble(p, 0.5f, 1.5f);                  /* 0x44c3ab: Perso +0x1e4, +0x1e0 = P+0xd4, P+0xd0, before the immunity tests */
+    if ((kind == 2 || kind == 6 || kind == 9) && game_soft_hazards() && !p->dead_kind) {   /* PORT EXTRA: a laser, lightning or blast costs a heart */
+        if (p->invuln_respawn > 0 || p->soft_t > 0) return;
+        p->soft_t = 1.0f; p->invuln_hit = 0;                             /* the blasts' own 0-damage Hit just before must not refuse this one */
+        if (kind == 6) { p->ride = NULL; bomb_drop(p); }                 /* as the Kill: off the rocket, the bomb in his hands went off */
+        if (!player_hit(p, 1.0f, (Vec3){ 0, 0, 0 })) return;
+        kind = 3;                                                        /* the last heart: the ordinary death */
+    }
     if (p->dead_kind) { if (!((kind == 7 && p->dead_kind != 7) || (kind == 1 && p->dead_kind != 1))) return; }
     if ((kind == 2 || kind == 9 || kind == 3 || kind == 8 || kind == 4 || kind == 5 || kind == 6) && p->invuln_respawn > 0) return;
     p->death_delay = 3.5f;                                              /* +0x288: time until the fade */
@@ -2220,6 +2227,7 @@ void player_update(Player *p, const PlayerInput *in, float dt, EkoVM *vm, float 
     if (p->move_lock > 0) p->move_lock -= dt;
     if (p->invuln_respawn > 0) p->invuln_respawn -= dt;
     if (p->invuln_hit > 0) p->invuln_hit -= dt;
+    if (p->soft_t > 0) p->soft_t -= dt;
     if (p->bonus_inv > 0) p->bonus_inv -= dt;                             /* 0x44b1fa */
     bonus_blink(p, dt);
     if (p->game_state == 0) return;                                      /* waiting for the respawn */

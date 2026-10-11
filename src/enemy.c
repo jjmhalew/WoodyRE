@@ -564,12 +564,14 @@ static void enemy_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
         if (!see) { e->st = 7; break; }
         e->want_ang = chase_target(e, to_player);                     /* 0x41bc80 -> Steer 0x41bd00 */
         e->turn_t = fabsf(ang_diff(to_player, e->ang)) / e->P.turn_fast; e->speed = e->want_speed = e->P.run; e->behav = 1; e->st = 1; if (e->type == 13) e->reload = e->P.reload;
+        e->react_t = game_enemy_delay();                              /* PORT EXTRA: it chases at once but holds its attack (0 = the original) */
         /* fallthrough */
     case 1:
         if (!see) { e->st = 7; break; }
         steer(e, e->want_ang, e->P.turn_fast, dt); e->want_ang = chase_target(e, to_player);   /* Steer 0x41bd00: H.Tick toward the last target, then the new one */
         if ((e->turn_t -= dt) <= 0) { step = (Vec3){ cosf(e->ang) * e->speed * dt, 0, sinf(e->ang) * e->speed * dt }; anim = EA_RUN; } else anim = EA_TURN;
         e->atk_t = ea_len(e, EA_DASH) + 0.5f * ea_len(e, EA_MISS);
+        if (e->react_t > 0) { e->react_t -= dt; break; }              /* PORT EXTRA (Gameplay page): no dash, dive or shot yet */
         if (e->type == 13) {                                      /* ghost 0x413d0d: dives within 300 (xz) when it moves at the player (3D dot), else fires while chasing */
             float d3 = sqrtf(dx * dx + dy * dy + dz * dz);
             if (dxz <= e->P.melee && d3 > 1e-3f && (cosf(e->ang) * dx + sinf(e->ang) * dz) / d3 > 0.95f) { e->speed = e->want_speed = e->P.dash; e->st = 4; break; }
@@ -711,6 +713,9 @@ static int shooter_vector(const Instance *in, uint32_t tc, Vec3 *p0)      /* 0x4
     for (uint32_t i = 0; i < mo->nnodes; i++) if (mo->nodes[i].kind == 0x20 && mo->nodes[i].type_code == tc && mo->nodes[i].npoints >= 1) { *p0 = ins_point_world(in, mo->nodes[i].point_base); return 1; }
     return 0;
 }
+/* PORT EXTRA (Gameplay page): a shooter that just noticed Woody reloads for the chosen delay first; the original fires at once
+ * (Reset zeroes the reload timer, docs/ENEMY.md) */
+static void shooter_react(Enemy *e) { float d = game_enemy_delay(); if (e->reload < d) e->reload = d; }
 static void shooter_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
 {
     Instance *in = e->inst;
@@ -739,7 +744,7 @@ static void shooter_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
             if (nx < 0 || nx >= (int)T->npoints) { if (T->closed) nx = nx < 0 ? (int)T->npoints - 1 : 0; else { e->path_dir = -e->path_dir; nx = (int)e->path_to + e->path_dir; } }
             e->path_to = (uint32_t)nx;
         } else { e->ang = atan2f(bz, bx); e->pos.x += bx / l * mv; e->pos.z += bz / l * mv; }
-        if (e->cool < 0 && see) { e->home = e->pos; e->behav = 2; e->st = S_WAIT; }
+        if (e->cool < 0 && see) { e->home = e->pos; e->behav = 2; e->st = S_WAIT; shooter_react(e); }
         break; }
     case S_TOWANDER:                                              /* 0x417057: speed P+0x08 direct, turn speed P+0x10, Wander restarts */
         e->speed = e->want_speed = e->P.walk; wander_restart(e, -1); e->behav = 0; e->st = S_WANDER;
@@ -747,7 +752,7 @@ static void shooter_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
     case S_WANDER: {                                              /* 0x4170a3 */
         float l = wander_tick(e, dt);
         step = (Vec3){ cosf(e->ang) * l, 0, sinf(e->ang) * l };
-        if (e->cool < 0 && see) e->st = S_WAIT;
+        if (e->cool < 0 && see) { e->st = S_WAIT; shooter_react(e); }
         if (in->traj.npoints > 1) { float hx = e->home.x - e->pos.x, hz = e->home.z - e->pos.z; if (hx * hx + hz * hz < 10.0f * 10.0f) { e->behav = 3; e->st = S_PATH; } }   /* even when 11 was just set */
         break; }
     case S_WAIT: {                                                /* reloading: stands still and does NOT turn (H.Tick is not called in 0x4171bd) */

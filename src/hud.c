@@ -361,6 +361,15 @@ static const struct { const char *en, *tr[4]; } k_port_tr[] = {   /* tr = Polish
     { "Left Shift",       { "Lewy Shift", "Mayús izquierda", "Shift esquerdo", "Левый Shift" } },
     { "Right Shift",      { "Prawy Shift", "Mayús derecha", "Shift direito", "Правый Shift" } },
     { "Left Alt",         { "Lewy Alt", "Alt izquierdo", "Alt esquerdo", "Левый Alt" } },
+    { "Gameplay",            { "Rozgrywka", "Jugabilidad", "Jogabilidade", "Игровой процесс" } },
+    { "Skip cutscenes:",      { "Pomijanie scenek:", "Saltar escenas:", "Pular cenas:", "Пропуск сцен:" } },
+    { "Lasers and blasts:",   { "Lasery i wybuchy:", "Láseres y explosiones:", "Lasers e explosões:", "Лазеры и взрывы:" } },
+    { "Cost a life",         { "Tracisz życie", "Una vida", "Uma vida", "Одна жизнь" } },
+    { "Cost a heart",        { "Tracisz serce", "Un corazón", "Um coração", "Одно сердце" } },
+    { "Enemy first attack:",  { "Pierwszy atak wroga:", "Primer ataque enemigo:", "Primeiro ataque inimigo:", "Первая атака врага:" } },
+    { "At once",             { "Od razu", "Al instante", "Na hora", "Сразу" } },
+    { "Lives after game over:", { "Życia po końcu gry:", "Vidas tras perder:", "Vidas após perder:", "После проигрыша жизней:" } },
+    { "As saved",            { "Jak w zapisie", "Las guardadas", "As salvas", "Как в сохранении" } },
     { "Right Alt",        { "Prawy Alt", "Alt derecho", "Alt direito", "Правый Alt" } } };
 const char *hud_tr(const char *en)
 {

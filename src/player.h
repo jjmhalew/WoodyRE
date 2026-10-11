@@ -52,6 +52,7 @@ typedef struct Player {
     /* damage / death / respawn */
     float health; int lives;        /* Perso+0x24c (hearts, max 5), +0x250 */
     int dead_kind; float death_delay, invuln_respawn, invuln_hit;   /* +0x26c, +0x288, +0x270, +0x280 */
+    float soft_t;                   /* PORT EXTRA (Gameplay page, soft hazards): no second heart from a laser / blast within 1 s */
     Vec3 push_dir; float push_t, push_speed;                         /* knockback (Mover RampC) */
     int game_state; float game_t; int mask10_frames;                 /* Game sequence 0x4459c0 */
     float iris_from, iris_to, iris_dur, iris_t, iris; int iris_on;  /* its iris Game+4 (0x4776b0); iris_on = drawn this tick, iris = its value */
@@ -210,6 +211,7 @@ void game_land_dust(Vec3 pos, Vec3 normal);
 void game_smoke_ring(Vec3 pos, Vec3 normal, int kind, float t0, float life);
 void game_splash(Vec3 c, float speed, float radius);   /* 0x478660, docs/SPLASH.md */
 void game_special_fx(void);                            /* 0x47ab90: the streaks and fire rings of the special attack (docs/PERSO_SPECIAL.md 3) */
+int  game_soft_hazards(void);                          /* PORT EXTRA (Gameplay page): Kill kinds 2 / 6 / 9 cost a heart instead of a life */
 int  game_enemy_thinks(const Instance *inst);           /* is the instance in this frame's list world+0x64 (rnd_instance_list), i.e. does its Think vtbl[3] run (0x42b400)? */
 uint32_t game_instance_list(Instance *const **list);   /* that list in its order (world+0x64, count +0x60); 0 and NULL without a renderer */
 /* the comic speech bubble 0x478980(inst, kind, duration, offY, offX, live) (docs/PERSO_DEATH.md 4.1): kind 0 "?!" (Kill 1),

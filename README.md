@@ -92,7 +92,9 @@ Everything the game writes stays next to `WoodyRE.exe` (or in `%LOCALAPPDATA%\Wo
 as `Program Files`, or a temporary one, such as when the exe is started from inside the zip):
 - `woodyre.cfg`: the options (sound volumes, rumble strength, the Display page: resolution, window or fullscreen, 4:3
   or wide, vsync, frame cap; the Graphics page: ambient occlusion, texture sharpness, edge smoothing (SMAA) and
-  multisampling (MSAA), all off by default; `logos=0` to skip the intro films, `pad_deadzone=30` for the stick dead zone
+  multisampling (MSAA), all off by default; the Gameplay page: skip cutscenes with Esc / Start, lasers and blasts
+  costing a heart instead of a life, a delay before an enemy's first attack, and the lives a slot gets after a game over,
+  all set to the original game by default (docs/GAMEPLAY.md); `logos=0` to skip the intro films, `pad_deadzone=30` for the stick dead zone
   in percent).
 - `woodyre.sav`: the four save slots, in the original `Woody.sav` layout. An original `Woody.sav` placed next to the exe
   is imported once.
