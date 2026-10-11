@@ -762,6 +762,20 @@ Order of implementation; numbers for mode 1 / W1B.
   longer lands a hit, neither in the round-29 build). Hooks: `WOODY_BOSSLOG=1` (state per frame), `WOODY_BOSSHP=N` (start hp),
   `WOODY_FPS=N` (frame cap, for the per-frame formulas), `WOODY_GOD=1`. A run to the end completes W1B in `woodyre.sav`: make a copy first.
 
+### 13.1 WWS: the final fight never started (fixed)
+
+After the fight intro in WWS Buzz vanished and only the wooden arena fence was left (every release: the scripts of 1.00
+and the Feb-2002 build are the same apart from three empty objects). Cause: the port
+celled an enemy whose mover had not run yet on its ANIMATED root. Buzz 362 sits on anim 0 (cinematic track), root
+2435 853 -4846: no floor group, so he was never in the instance list, Think never called Update and the mailbox (var 138)
+never saw the script's 2. The original never re-cells a flag-0x20 actor by its clock, so it keeps the loader's cell at its
+.ins position (1519 761 -6811, group 8) until its first Update. Fix: `cell_point` (render_gl.c) uses `position` for types
+4..16 until the mover sets `cell_dy`. W1B / W2D / W3D / W2B / W1A logs are identical before and after. Test (EN or PL data):
+`WOODY_KEYS="3:RET 5:RET 7:RET 9:RET 11:RET 13:RET 17:RET 20:DOWN 21:RET 24:RET 27:RET" out/woody.exe <Data> WWS --prev W3D
+--alldone --nologo` (run it from a scratch folder: the keys answer the save prompt; WOODY_KEYS needs the wall clock, not
+WOODY_FIXDT, as the menu stops the game clock). Fight at ~41 s; `WOODY_BOSSHP=1 WOODY_GOD=1 WOODY_BOSSHIT=1` wins it:
+`BOSS 362 beaten: var 138 := 3`, cinematic 73, 1180, Credits.
+
 ## 14. Open questions
 
 * Visual meaning of anims 5..18 (model 37) and 5..18 of model 38; which ones exactly are "flying", "laughing", "hit" is derived from usage.

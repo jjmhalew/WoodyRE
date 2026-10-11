@@ -3869,6 +3869,7 @@ int main(int argc, char **argv)
     double enter_at = -1;                                                         /* --enter T: press Enter on the title after T s (testing) */
     int pick_type = 0, pre_bonus = -1; float pre_health = -1; double pick_at = 0;   /* --pickup TYPE T, --bonus N, --health N (testing) */
     int door_inst = -1, door_act = 17; double door_at = -1;                        /* --door INST ACT T (testing) */
+    int all_done = 0;
     int new_game = 0, logo = -1; const char *next_name = NULL; double next_at = 0;   /* --nologo / --logo: the logo films off / on even for a scripted run */                              /* --next LVL T: change to level LVL after T s (testing) */
     double walk_for = 0, walk_at = wenv("WOODY_WALKAT") ? atof(wenv("WOODY_WALKAT")) : 0; int fly = 0;                                             /* --walk T: hold forward for T s (testing); --fly: start in free camera */
     int res_w = 0, res_h = 0, full_arg = -1, wide_arg = -1;                          /* --res WxH, --windowed / --fullscreen, --aspect 4:3|wide (port extras) */
@@ -3890,6 +3891,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--health") && i + 1 < argc) { pre_health = (float)atof(argv[i + 1]); i += 1; }                        /* --health N: hearts before the pickup (testing) */
         else if (!strcmp(argv[i], "--yaw") && i + 1 < argc) { have_yaw = 1; yaw_arg = (float)atof(argv[i + 1]) * 3.14159265f / 180; i += 1; }   /* with --pos: facing in degrees */
         else if (!strcmp(argv[i], "--unlock")) g_unlock_all = 1;                       /* every level door open */
+        else if (!strcmp(argv[i], "--alldone")) all_done = 1;                          /* every level finished: the hubs' final fights (testing) */
         else if (!strcmp(argv[i], "--newgame")) new_game = 1;                          /* ignore woodyre.sav */
         else if (!strcmp(argv[i], "--nologo")) logo = 0;
         else if (!strcmp(argv[i], "--logo")) logo = 1;
@@ -3944,6 +3946,7 @@ int main(int argc, char **argv)
         for (int i = 0; i < 4 && s < 0; i++) if (slot_pct(&g_file.slot[i])) s = i;
         if (s >= 0 && s < 4) g_save = g_file.slot[s];
     }
+    if (all_done) for (int l = 2; l < 25; l++) if (l != 11 && l != 18) g_save.chr[char_of_level(l)].rec[l].done = 1;
     if (!wenv("WOODY_NOSOUND") && !audio_init()) { char bf[512]; snprintf(bf, sizeof bf, "%s/../Music.bf", dir); printf("Music.bf: %d files\n", audio_bf_open(bf)); }
     opt_apply();                                                                       /* 0x4691e2: the volumes from the cfg at sound start */
     audio_reverse_stereo(wenv("WOODY_REVSTEREO") ? atoi(wenv("WOODY_REVSTEREO")) != 0 : g_setup.rev);   /* 0x4691f4: [0x5e81c0] = cfg +0x74 */

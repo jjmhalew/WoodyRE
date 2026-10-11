@@ -991,10 +991,14 @@ static void chain_unlink(Renderer *r, Instance *in)
     in->cell_next = NULL; in->chain_sec1 = 0;
 }
 /* the cell point of a clock run or an actor's own re-cell: an enemy's collision centre (0x4077f0 in its mover), a flag-0x20
- * link its .ins position (the last explicit 0x4077f0(NULL)), everything else the animated root inst+0x60 (the clock 0x43f2f1) */
+ * link its .ins position (the last explicit 0x4077f0(NULL)), everything else the animated root inst+0x60 (the clock 0x43f2f1).
+ * An enemy whose mover has not run yet (the bosses 13..16: no ground snap at PostLoad) is still in the cell the loader gave
+ * it, its .ins position: the clock never re-cells flag 0x20. On its animated root the WWS Buzz (362, anim 0 = cinematic
+ * track, root 2435 853 -4846) had no floor group, was never listed, never thought, so never took the script's start (var 138) */
 static Vec3 cell_point(const Instance *in)
 {
-    return in->cell_dy > 0 ? (Vec3){ in->position.x, in->position.y + in->cell_dy, in->position.z } : in->cell_fixed ? in->position : ins_anim_centre(in);
+    return in->cell_dy > 0 ? (Vec3){ in->position.x, in->position.y + in->cell_dy, in->position.z }
+         : in->cell_fixed || (in->type >= 4 && in->type <= 16) ? in->position : ins_anim_centre(in);
 }
 /* +8 & 0x20 (level.c ins_flag20): the actors move and re-cell themselves (the Perso, enemies and bosses, the race board, the
  * rocket, the bomb cannon, the bombs), the links of messages 61/62 are never re-celled by their clock */
