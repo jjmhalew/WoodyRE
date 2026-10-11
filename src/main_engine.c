@@ -46,6 +46,9 @@
 
 static InsFile g_ins;
 static int g_log_msgs = 1;
+#ifndef WOODY_LOG_MAX
+#define WOODY_LOG_MAX (32L << 20)                /* woodyre.log starts again past this size (plat_sdl.c: the same for the Android tee) */
+#endif
 static Player *g_player;
 static const Renderer *g_rnd; static const GelFile *g_gel;              /* the current level's renderer and world, for game_enemy_thinks() */
 static EnemySet g_enemies;
@@ -3852,6 +3855,9 @@ int main(int argc, char **argv)
 #ifdef WOODY_GUI
     if (!wenv("WOODY_CONSOLE")) freopen("woodyre.log", "w", stdout);              /* the windowed release build: the log beside woodyre.cfg */
 #endif
+#if defined WOODY_GUI || !defined _WIN32
+    g_log_msgs = wenv("WOODY_TRACE") != NULL;                                     /* release builds: the per-message trace (SEND, player t=) only on request, hours of play made a 100 MB log */
+#endif
     int verify = 0;                                                               /* --verify: check the data against the supported CDs and quit */
     const char *shot_path = NULL; double shot_after = 0;                          /* --shot file.ppm seconds: screenshot then quit */
     int have_cam = 0; float cam_args[5] = {0, 0, 0, 0, 0};                          /* --cam x y z yaw pitch (degrees) */
@@ -4415,7 +4421,10 @@ int main(int argc, char **argv)
             lvl = L.name; continue;
         }
         if (now - fps_t > 2.0 && wenv("WOODY_FPSLOG")) printf("fps %.1f\n", frames / (now - fps_t));   /* testing: the frame cap / vsync */
-        if (now - fps_t > 2.0) { char title[256]; snprintf(title, sizeof title, "WoodyRE%s - %s - %.0f fps - VM t=%d frame %u msgs %u - %s - woody %.0f %.0f %.0f %s - vol events %u - hearts %.0f lives %d bonus %d/%d", g_level == 0 ? " - TITLE: Enter = new game, L = continue" : "", lvl, frames / (now - fps_t), L.vm.time, L.vm.frame, L.vm.stat_msgs_total, fly ? "fly" : "play", L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.on_ground ? "ground" : "air", L.player.events_sent, L.player.health, L.player.lives, L.player.bonus_got, L.player.bonus_total); if (WOODY_DEBUG_TITLE) win_title(&win, title); if (L.have_player) printf("player t=%.1f pos %.0f %.0f %.0f vel %.0f %.0f %.0f %s floor %.0f cam %.0f %.0f %.0f\n", now - t0, L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.vel.x, L.player.vel.y, L.player.vel.z, L.player.on_ground ? (L.player.floor_is_hull ? "hull" : "ground") : "air", L.player.floor_y, cam.pos.x, cam.pos.y, cam.pos.z); frames = 0; fps_t = now; }
+#ifdef WOODY_GUI
+        if (now - fps_t > 2.0 && !wenv("WOODY_CONSOLE") && ftell(stdout) > WOODY_LOG_MAX) { freopen("woodyre.log", "w", stdout); printf("log: woodyre.log passed %d MB and starts again\n", (int)(WOODY_LOG_MAX >> 20)); }   /* a bound for whatever still prints a lot */
+#endif
+        if (now - fps_t > 2.0) { char title[256]; snprintf(title, sizeof title, "WoodyRE%s - %s - %.0f fps - VM t=%d frame %u msgs %u - %s - woody %.0f %.0f %.0f %s - vol events %u - hearts %.0f lives %d bonus %d/%d", g_level == 0 ? " - TITLE: Enter = new game, L = continue" : "", lvl, frames / (now - fps_t), L.vm.time, L.vm.frame, L.vm.stat_msgs_total, fly ? "fly" : "play", L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.on_ground ? "ground" : "air", L.player.events_sent, L.player.health, L.player.lives, L.player.bonus_got, L.player.bonus_total); if (WOODY_DEBUG_TITLE) win_title(&win, title); if (L.have_player && g_log_msgs) printf("player t=%.1f pos %.0f %.0f %.0f vel %.0f %.0f %.0f %s floor %.0f cam %.0f %.0f %.0f\n", now - t0, L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.vel.x, L.player.vel.y, L.player.vel.z, L.player.on_ground ? (L.player.floor_is_hull ? "hull" : "ground") : "air", L.player.floor_y, cam.pos.x, cam.pos.y, cam.pos.z); frames = 0; fps_t = now; }
     }
     opt_write(); level_free(&L); audio_shutdown(); win_close(&win);   /* 0x401130: the cfg is written back at exit */
     return 0;

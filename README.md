@@ -96,7 +96,8 @@ as `Program Files`, or a temporary one, such as when the exe is started from ins
   in percent).
 - `woodyre.sav`: the four save slots, in the original `Woody.sav` layout. An original `Woody.sav` placed next to the exe
   is imported once.
-- `woodyre.log`: the engine log, useful in bug reports.
+- `woodyre.log`: the engine log, useful in bug reports. It starts again past 32 MB; `WOODY_TRACE=1` adds the per-message
+  script trace (large).
 
 Command line: `WoodyRE.exe [--windowed | --fullscreen] [--res WxH] [--aspect 4:3|wide] [--nologo] [--verify] [--dumptex]`.
 

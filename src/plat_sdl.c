@@ -119,8 +119,9 @@ void plat_message(const char *text, int warn)
 static int g_logfd = -1, g_logpipe[2];
 static void *log_pump(void *arg)
 {
-    (void)arg; char b[1024]; size_t n = 0; ssize_t k;
+    (void)arg; char b[1024]; size_t n = 0; ssize_t k; long long put = 0;
     while ((k = read(g_logpipe[0], b + n, sizeof b - 1 - n)) > 0) {
+        if (g_logfd >= 0 && (put += k) > (32LL << 20)) { (void)!ftruncate(g_logfd, 0); lseek(g_logfd, 0, SEEK_SET); put = k; }   /* woodyre.log starts again past 32 MB, as main_engine.c */
         if (g_logfd >= 0) (void)!write(g_logfd, b + n, (size_t)k);
         n += (size_t)k; b[n] = 0;
         char *s = b, *e;
