@@ -12,6 +12,10 @@ under 40 instructions (constructors, destructors, getters, free chains). The lib
 library, BigFile, HNM player, the "Golem 0.2 by BKG" window framework, the MSVC runtime, SEH funclets) is replaced by the port
 and needs no analysis. "Named" is not "ported correctly": it only means someone has looked at it. Round 33 took the BlackBox mode, the credits screen and the unnamed collision helpers off this list (rows in "2D, menus, game flow" and "Player"); the scan then gave 92.5 % (781 functions, 12.4k instructions left). Round 34: `coverage.py` merges switch case labels and jump tables into their function (383 false entries) and no longer hides callers/callees it printed earlier; every function below `0x480000` is now named (100 %), the A/B/C catalogue is in ANALYSE.md "Coverage triage, round 34". The only reachable gap it found was the save menu layout (row in "2D, menus, game flow").
 
+`--html [FILE]` also draws the coverage map (default `out/coverage.html`, not committed): every function of Woody.exe by
+address, coloured ported (named in `src/`), read (named only in `docs/` or `tools/`), helper (only called from those),
+library (>= `0x480000`) or open, with the open list. Publish it to share it.
+
 | what | status | where |
 |---|---|---|
 | Model renderer per-vertex routines `0x43c5f0`, `0x43c910`, `0x43cc20`, `0x43cf10` = frustum polygon clippers (the GPU clips by itself), `0x43d1f0` = a user-plane clipper that is never enabled (`[0x5ac860]` only written 0); `0x429c80` is dead (`world+0xac` never set); `0x440740` is a 3×4 matrix product | done, nothing to port | MODEL_RENDER.md §11 |
