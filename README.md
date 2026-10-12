@@ -173,6 +173,8 @@ git, as are `data/` and the scratch folder `out/`. The original's internals are 
 pip install pefile capstone ziglang pillow
 python -m ziglang cc -std=c99 -O2 -o out/ekorun.exe src/ekovm.c src/ekorun.c
 ./out/ekorun.exe extract/Data/W1A/code 60          # init + 60 ticks, print SEND trace
+python -m ziglang cc -std=c99 -O2 -o out/randtest.exe src/ekovm.c src/randtest.c
+./out/randtest.exe                                 # the game's rand() stream = MSVC rand() of Woody.exe (docs/RANDOM.md)
 python tools/ekodisasm.py extract/Data out/ekoasm   # disassemble all levels
 python tools/ekovm.py extract/Data                  # message statistics for all levels
 ```

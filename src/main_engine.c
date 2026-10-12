@@ -20,6 +20,7 @@
 #include "level.h"
 #include "render_gl.h"
 #include "ekovm.h"
+#include "crtrand.h"
 #include "player.h"
 #include "instance.h"
 #include "enemy.h"
@@ -74,7 +75,6 @@ static int level_index(const char *name) { for (int i = 0; i < 29; i++) if (!_st
 static struct { int state, anim, nactors; Instance *main_inst, *vec; struct { Instance *inst; int anim; } actor[32]; uint32_t var; float remain, timer; int rtc; } g_cin;
 static int cin_running(void) { return g_cin.state == 2 || g_cin.state == 3; }               /* 0x44f2e0: Perso update skipped */
 
-static uint32_t msvc_rand(void *user);
 /* ---- camera manager: follow camera (mode 1, player.c) + the fixed script cameras (docs/CAMERA_SCRIPT.md, CAMERA.md 4 and 6.1)
  * mode 2 (message 510) / mode 4 (520, letterbox, player frozen): camera at the .ins camera position looking at
  * target origin + (0, f, 0). A mode change blends linearly from the frozen old camera unless the script asked for a cut. */
@@ -344,7 +344,7 @@ static void cam_update(Player *p, FreeCamera *cam, float dt, int behind_key)
     if (g_cam.shake > 0) {                                       /* 0x41fbd0 after the mode update, modes 1 2 4 8 0x10 0x20 (0x41ffb4): only the view direction trembles, +-5 min(t,3) per axis */
         int m = g_cam.mode; if (m == 1 || m == 2 || m == 4 || m == 8 || m == 0x10 || m == 0x20) {
             float a = g_cam.shake < 3.0f ? g_cam.shake : 3.0f;
-            look.x += (float)((int)(msvc_rand(NULL) % 1000) - 500) * 0.01f * a; look.y += (float)((int)(msvc_rand(NULL) % 1000) - 500) * 0.01f * a; look.z += (float)((int)(msvc_rand(NULL) % 1000) - 500) * 0.01f * a; }
+            look.x += (float)(crt_mod(1000) - 500) * 0.01f * a; look.y += (float)(crt_mod(1000) - 500) * 0.01f * a; look.z += (float)(crt_mod(1000) - 500) * 0.01f * a; }
         g_cam.shake -= dt;
     }
     Vec3 to = { look.x - P.x, look.y - P.y, look.z - P.z };
@@ -1771,7 +1771,7 @@ static void results_update(EkoVM *vm, float dt, int ok)               /* the tab
 /* one lazer effect object per marker (0x46e4a0, 0x40 B, flags +0x34 = 0x3c0 for every laser): the timers of the
  * travelling pulse, the lightning arc and the impact at the hit point, plus the arc's own ring of 32 side offsets
  * (pool 0x5e82a8, 100 lazers x 0x20 points of 0x1c B) */
-typedef struct { float acc, s, arc_t, salvo, imp_t, imp_r; int sub, regen, npts; float pts[32][2]; } LaserFx;
+typedef struct { float acc, s, arc_t, salvo, imp_t, imp_r, spk; int sub, regen, npts; float pts[32][2]; } LaserFx;   /* spk = +0x28, the spark clock */
 typedef struct { Instance *inst, *target; int type, on; float len, phase; LaserFx fx[8]; } Laser;
 static Laser g_lasers[64]; static int g_nlasers;
 static Laser *laser_of(const Instance *in) { for (int i = 0; i < g_nlasers; i++) if (g_lasers[i].inst == in) return &g_lasers[i]; return NULL; }
@@ -1821,19 +1821,19 @@ static int laser_hits_player(Vec3 a, Vec3 b, const Player *p)
     float hh = player_body_height(p) * 0.5f, t = seg_cyl(a, b, (Vec3){ p->pos.x, p->pos.y + hh, p->pos.z }, 69.0f * 0.85f, hh);
     return t >= 0 && !(t > 1.0f);                                                   /* 0x450ff2, 0x451002 */
 }
-static float fx_rnd(void);
 static void laser_fx_init(LaserFx *fx)                                             /* 0x46e4a0 */
 {
     memset(fx, 0, sizeof *fx);
     fx->s = -1.0f; fx->salvo = -1.0f; fx->regen = 1;
-    fx->arc_t = fx_rnd() * 2.0f; fx->imp_r = fx_rnd() * 50.0f;
+    fx->arc_t = crt_rnd() * 2.0f; fx->imp_r = crt_rnd() * 50.0f;
 }
 /* the rest of Lazer_Draw 0x46e530 after core and glow: g = the glow pulse, kind = rec+0x2c (0 free end, 1 on geometry, 2 to a target) */
 static void laser_fx_draw(LaserFx *fx, Vec3 a, Vec3 b, int kind, float g, const float *eye, float dt)
 {
     Vec3 d = { b.x - a.x, b.y - a.y, b.z - a.z };
     float len = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
-    fx->acc += fx_rnd() * 0.8f * dt; fx->arc_t += dt; fx->imp_t += dt;             /* 0x46e59b.. */
+    fx->acc += crt_rnd() * 0.8f * dt; fx->arc_t += dt; fx->imp_t += dt;             /* 0x46e59b.. */
+    if (fx->spk < 0.5f) fx->spk += dt;                                             /* 0x46e5d2: +0x28 runs up to 0.5 s */
     /* 0x80, 0x46ea1d: a blob that runs down the beam in 0.25 s, on average every 2.5 s: two textured quads of 0.1 of the length either side of it */
     if (fx->acc > 1.0f) { fx->acc -= 1.0f; fx->s = 0; }
     if (fx->s >= 0 && fx->s < 1.0f) {
@@ -1857,10 +1857,10 @@ static void laser_fx_draw(LaserFx *fx, Vec3 a, Vec3 b, int kind, float g, const 
         float step = n > 0 ? len / (float)n : 0;
         if (fx->regen) {                                                            /* 0x47d370 + 0x47d160: offsets of +-25 across the beam */
             fx->npts = 0;
-            for (int i = 0; i < n; i++) { float *q = fx->pts[fx->npts % 32]; q[0] = fx_rnd() * 50.0f - 25.0f; q[1] = fx_rnd() * 50.0f - 25.0f; if (fx->npts < 32) fx->npts++; }
+            for (int i = 0; i < n; i++) { float *q = fx->pts[fx->npts % 32]; q[0] = crt_rnd() * 50.0f - 25.0f; q[1] = crt_rnd() * 50.0f - 25.0f; if (fx->npts < 32) fx->npts++; }
             fx->regen = 0;
         }
-        float al = fx_rnd();                                                        /* one flicker per frame for the whole arc */
+        float al = crt_rnd();                                                        /* one flicker per frame for the whole arc */
         if (n > 0 && len > 0) {
             Vec3 w = { d.x / len, d.y / len, d.z / len }, u, v;                     /* 0x46d320: rows u, v, w = the beam direction */
             if (w.x < 0.001f && w.x > -0.001f && w.z < 0.001f && w.z > -0.001f) {
@@ -1884,13 +1884,14 @@ static void laser_fx_draw(LaserFx *fx, Vec3 a, Vec3 b, int kind, float g, const 
     /* 0x200, 0x46efb9: where the beam hits geometry, four crossed quads of bank 0 image 5. The spark loop there
      * (50 a second) only draws two random numbers: its spawn is compiled out, so there are no sparks */
     if (kind == 1) {
-        if (fx->imp_t > 0.1f) { fx->imp_t -= 0.1f; fx->imp_r = fx_rnd() * 50.0f; }
+        int nspk = (int)lrintf(fx->spk * 50.0f); fx->spk -= (float)nspk * 0.02f;     /* 0x46efd2: fistp (rounds), then -= n * 0.02 */
+        for (int i = 0; i < nspk; i++) { crt_mod(0x55); crt_rnd(); }                /* 0x46f015 / 0x46f01d: both thrown away, but they move the stream */
+        if (fx->imp_t > 0.1f) { fx->imp_t -= 0.1f; fx->imp_r = crt_rnd() * 50.0f; }
         static const float ic[3] = { 1, 0.4f, 0.4f };
         static const float in[4][3] = { { 0.7f, 0.7f, 0 }, { -0.7f, 0.7f, 0 }, { 0, 0.7f, 0.7f }, { 0, 0.7f, -0.7f } };
         for (int q = 0; q < 4; q++) hud_world_fx_plane(5, &b.x, in[q], 60.0f + fx->imp_r, ic, 0.2f + fx->imp_r * 0.01f);
     }
 }
-static uint32_t msvc_rand(void *user);
 static Quat quat_from_axes(Vec3 X, Vec3 Y, Vec3 Z);
 
 /* ---- exhaust smoke and explosion flashes -------------------------------------------------------------------------
@@ -1899,7 +1900,7 @@ static Quat quat_from_axes(Vec3 X, Vec3 Y, Vec3 Z);
 typedef struct { Vec3 pos; float t, rot; } Puff;              /* 0x475380: one smoke cloud, 0.2 s, image 14 */
 typedef struct { Vec3 pos; float t, R; } Blast;               /* 0x4762e0: the nine flat quads of one flash, 0.3 s, image 12 */
 static Puff g_puffs[96]; static int g_puff_next; static Blast g_blasts[16];
-static void puff_add(Vec3 p) { Puff *q = &g_puffs[g_puff_next++ % 96]; q->pos = p; q->t = 1e-4f; q->rot = (float)msvc_rand(NULL) / 32767.0f; }
+static void puff_add(Vec3 p) { Puff *q = &g_puffs[g_puff_next++ % 96]; q->pos = p; q->t = 1e-4f; q->rot = crt_rnd(); }
 /* the particles of an explosion 0x477060 (docs/PARTICLES.md 5): kind 0 (bombs) = the dust burst 0x476cd0 and the smoke ring
  * 0x476140(pos, n, 0, 0.25, 1.5) next to its flash and ring (bombfx); kind 1 = the burning debris 0x476b50 and the dust burst
  * next to the two flashes 0x4762e0 (blast_add). Defined with the effect pool below. */
@@ -1987,7 +1988,7 @@ static void missile_exhaust(Missile *mi, float dt)
     for (int k = 0; k < mi->nmark; k++) {
         Vec3 m, d; if (!inst_vector_at(mi->inst, 9, (uint32_t)k, &m, &d)) break;
         float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); if (l > 1e-4f) { d.x /= l; d.y /= l; d.z /= l; }
-        float fl = 45.0f + (float)msvc_rand(NULL) / 32767.0f * 10.0f - 5.0f, off = fl * (0.8944272f - 0.015625f);   /* mode 0x13: cos(atan 0.5); 0x4abcf8 = 1/64 */
+        float fl = 45.0f + crt_rnd() * 10.0f - 5.0f, off = fl * (0.8944272f - 0.015625f);   /* mode 0x13: cos(atan 0.5); 0x4abcf8 = 1/64 */
         float fp[3] = { m.x + d.x * off, m.y + d.y * off, m.z + d.z * off };
         hud_world_fx(32, &m.x, 40.0f, 1.0f - mi->f1, white, 1.0f - 0.2f * sinf(3.14159265f * mi->f1));
         hud_world_fx(32, &m.x, 35.0f, 1.0f - mi->f2, white, 1.0f - 0.2f * sinf(3.14159265f * mi->f2));
@@ -2220,7 +2221,8 @@ static void bombs_draw(const float *eye, float dt)
         float f = b->fuse > 0 ? b->t / b->fuse : 1; if (f > 1) f = 1;
         float tip[3] = { v0.x + dv.x * (1 - f), v0.y + dv.y * (1 - f), v0.z + dv.z * (1 - f) };
         hud_world_line(&v0.x, tip, eye, 1.0f, g0, 1.0f, 0.4f);
-        hud_world_fx(18, tip, 5.0f + (float)msvc_rand(NULL) / 32767.0f * 10.0f, (float)msvc_rand(NULL) / 32767.0f, white, 0.7f);
+        { float sz = 5.0f + crt_rnd() * 10.0f, rot = crt_rnd();                   /* 0x478da8 size, then 0x478dc9 rotation (one statement each: C leaves argument order open) */
+          hud_world_fx(18, tip, sz, rot, white, 0.7f); }
     }
     for (int i = 0; i < 32; i++) {
         BombFx *x = &g_bombfx[i]; if (x->t <= 0) continue;
@@ -2543,9 +2545,9 @@ static void boss_fx_draw(float dt)
         Vec3 p, d; if (!inst_vector_at(g_bplume[e].link, 0, (uint32_t)g_bplume[e].n, &p, &d)) p = g_bplume[e].link->position;
         Vec3 D = { g_bplume[e].prev.x - p.x, g_bplume[e].prev.y - p.y, g_bplume[e].prev.z - p.z };
         for (int i = 0; i < k; i++) {
-            float f = (float)i / (float)k, jx = fx_rnd() * 30.0f, jz;
-            Vec3 q; q.x = f * D.x + jx + p.x - 15.0f; q.y = f * D.y + p.y; jz = fx_rnd() * 30.0f; q.z = f * D.z + jz + p.z - 15.0f;
-            int j = g_bsmoke_next++ % 1024; g_bsmoke[j].pos = q; g_bsmoke[j].t = 1e-6f; g_bsmoke[j].size = fx_rnd() * 10.0f; g_bsmoke[j].rot = fistp(fx_rnd() * 512.0f);
+            float f = (float)i / (float)k, jx = crt_rnd() * 30.0f, jz;
+            Vec3 q; q.x = f * D.x + jx + p.x - 15.0f; q.y = f * D.y + p.y; jz = crt_rnd() * 30.0f; q.z = f * D.z + jz + p.z - 15.0f;
+            int j = g_bsmoke_next++ % 1024; g_bsmoke[j].pos = q; g_bsmoke[j].t = 1e-6f; g_bsmoke[j].size = crt_rnd() * 10.0f; g_bsmoke[j].rot = fistp(crt_rnd() * 512.0f);
             if (i == k - 1) g_bplume[e].prev = q;
         }
     }
@@ -2561,7 +2563,8 @@ static void boss_fx_draw(float dt)
 static struct { Enemy *e; float age; int img; } g_stars[16];
 void game_enemy_stars(Enemy *e)
 {
-    for (int i = 0; i < 16; i++) if (!g_stars[i].e) { g_stars[i].e = e; g_stars[i].age = 0; g_stars[i].img = (rand() & 1) ? 11 : 10; return; }
+    int img = (crt_rand() & 1) ? 11 : 10;                                        /* 0x41b003: drawn before 0x477610 looks for a free slot */
+    for (int i = 0; i < 16; i++) if (!g_stars[i].e) { g_stars[i].e = e; g_stars[i].age = 0; g_stars[i].img = img; return; }
 }
 static void stars_draw(float dt)
 {
@@ -2650,7 +2653,6 @@ AmbFx *game_fx_amb_new(void)                                                 /* 
     FxRec *r = fx_new(1.0f, (Vec3){ 0, 0, 0 }, FX_AMB);
     return r ? &r->amb : NULL;
 }
-static float fx_rnd(void) { return (float)rand() / (float)RAND_MAX; }        /* 0x43ff40: rand() / 32767, so [0,1] inclusive */
 static void fx_rotmat(int a0, int a1, int a2, float M[9])                    /* 0x46d220; the angles are in 1/512 turn */
 {
     const float k = 6.2831853f / 512.0f;
@@ -2685,7 +2687,7 @@ void game_pickup_fx(int n, Vec3 pos)                                         /* 
 void game_splash(Vec3 c, float speed, float radius)
 {
     FxRec *e = fx_new(1.0f, c, 3); if (!e) return;
-    e->h = speed * 0.001f; e->acc = 0; e->acc2 = 0.2f; e->R = fx_rnd() * 50.0f + radius;   /* accK starts at 0.2: the first ring comes in the first frame */
+    e->h = speed * 0.001f; e->acc = 0; e->acc2 = 0.2f; e->R = crt_rnd() * 50.0f + radius;   /* accK starts at 0.2: the first ring comes in the first frame */
 }
 static float sin512(int i) { return sinf(6.2831853f * (i & 511) / 512.0f); }   /* -cos512[(i + 128) & 511] */
 static float cos512(int i) { return cosf(6.2831853f * (i & 511) / 512.0f); }
@@ -2701,10 +2703,10 @@ void game_hit_star(Vec3 pt)                                                  /* 
     Vec3 V = { n.y * U.z - n.z * U.y, n.z * U.x - n.x * U.z, n.x * U.y - n.y * U.x };
     for (int j = 0; j < 8; j++) {                                            /* 8 spokes 45 degrees apart, +-17.6 degrees */
         FxRec *s = fx_new(0.4f, pt, 11); if (!s) continue;
-        int a1 = (int)(fx_rnd() * 50.0f + 64 * j - 25), a2 = (int)(fx_rnd() * 50.0f + 64 * j - 25);
+        int a1 = (int)(crt_rnd() * 50.0f + 64 * j - 25), a2 = (int)(crt_rnd() * 50.0f + 64 * j - 25);
         Vec3 d = { U.x * cos512(a1) + V.x * sin512(a2), U.y * cos512(a1) + V.y * sin512(a2), U.z * cos512(a1) + V.z * sin512(a2) };
         l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); s->dir = l > 1e-5f ? (Vec3){ d.x / l, d.y / l, d.z / l } : U;
-        s->shape = fx_rnd() * 2.0f > 1.0f; s->R = fx_rnd() * 20.0f - 5.0f + 25.0f;   /* spin; size 20..40 (half diagonal) */
+        s->shape = crt_rnd() * 2.0f > 1.0f; s->R = crt_rnd() * 20.0f - 5.0f + 25.0f;   /* spin; size 20..40 (half diagonal) */
     }
 }
 /* message 1508 [inst] (0x46ceae, docs/PARTICLES.md 9): a torch. A 20-byte node {inst, n, timers, points, next} goes on the
@@ -2730,11 +2732,12 @@ static void torch_update(float dt)                                           /* 
             int n = (int)(*t * 15.0f); *t -= (float)n * 0.0666667f;           /* 15 flames a second (0x4a9864, 0x4abd8c) */
             while (n-- > 0) {
                 FxRec *f = fx_new(0, g_torch[i].p[k], FX_FLAME); if (!f) continue;
-                float dx = fx_rnd() * 20.0f - 10.0f, dz = fx_rnd() * 20.0f - 10.0f;   /* 0x47cfc3 */
+                float dx = crt_rnd() * 20.0f - 10.0f, dz = crt_rnd() * 20.0f - 10.0f;   /* 0x47cfc3 */
                 f->pos.x += dx; f->pos.z += dz;
                 float k2 = 1.0f - sqrtf(dx * dx + dz * dz) * 0.1f;           /* 1 at the centre, 0 at 10 out, down to -0.41 in the corners */
-                f->R = fx_rnd() * (fx_rnd() * k2 * 20.0f) + 40.0f;           /* +0x14: the size */
-                f->life = fx_rnd() * k2 * 0.5f + 2.5f;                        /* +4 */
+                float r1 = crt_rnd() * k2 * 20.0f;                            /* 0x47d02c, then 0x47d03f: the inner draw comes first */
+                f->R = crt_rnd() * r1 + 40.0f;                                /* +0x14: the size */
+                f->life = crt_rnd() * k2 * 0.5f + 2.5f;                        /* +4 */
             }
         }
     }
@@ -2770,17 +2773,17 @@ static void fx_update(float dt, const float *eye)
                 if (u < 0.3f) {
                     int n = (int)(e->acc * 500.0f); e->acc -= n * 0.002f;
                     while (n-- > 0) {
-                        FxRec *d = fx_new((fx_rnd() + 1.0f) * 0.4f, e->pos, 4); if (!d) continue;
-                        int a = (int)(fx_rnd() * 511.0f); float c = cosf(6.2831853f * a / 512.0f), s = sin512(a);
-                        d->pos.x = (fx_rnd() * 20.0f + e->R) * c + e->pos.x;     /* separate jitter per axis, not purely radial */
-                        d->pos.z = (fx_rnd() * 20.0f + e->R) * s + e->pos.z;
+                        FxRec *d = fx_new((crt_rnd() + 1.0f) * 0.4f, e->pos, 4); if (!d) continue;
+                        int a = (int)(crt_rnd() * 511.0f); float c = cosf(6.2831853f * a / 512.0f), s = sin512(a);
+                        d->pos.x = (crt_rnd() * 20.0f + e->R) * c + e->pos.x;     /* separate jitter per axis, not purely radial */
+                        d->pos.z = (crt_rnd() * 20.0f + e->R) * s + e->pos.z;
                         d->dir = e->R > 0 ? (Vec3){ c, 0, s } : (Vec3){ 0, 0, 0 };
-                        fx_rnd(); fx_rnd();                                      /* +0x24, +0x20: never read */
-                        d->h = e->h; d->D = fx_rnd() * 100.0f + 150.0f;          /* 150..250 outward */
+                        crt_rnd(); crt_rnd();                                      /* +0x24, +0x20: never read */
+                        d->h = e->h; d->D = crt_rnd() * 100.0f + 150.0f;          /* 150..250 outward */
                     }
                 }
                 int n = (int)(e->acc2 * 5.0f); e->acc2 -= n * 0.2f;
-                while (n-- > 0) { FxRec *k = fx_new(0.7f, e->pos, 6); if (k) { k->R = e->R; fx_rnd(); } }   /* the rotation rnd*512 does nothing: the ring image is round */
+                while (n-- > 0) { FxRec *k = fx_new(0.7f, e->pos, 6); if (k) { k->R = e->R; crt_rnd(); } }   /* the rotation rnd*512 does nothing: the ring image is round */
             } else if (e->kind == 4) {                                       /* 0x477fa0: an additive streak, tail alpha 0, head 0.08 further on */
                 Vec3 a = drop_pt(e, u, u), b = drop_pt(e, u + 0.08f, u + 0.1f);
                 if (eye) hud_world_streak(57, &a.x, &b.x, eye, 4.0f, grey05, 0.0f, 0.65f);
@@ -2794,7 +2797,7 @@ static void fx_update(float dt, const float *eye)
                     int n = (int)(e->acc * 250.0f); e->acc -= n * 0.004f;
                     while (n-- > 0) {
                         FxRec *s = fx_new(0.5f, feet, 8); if (!s) continue;
-                        int a = (int)(fx_rnd() * 512.0f), b = (int)(fx_rnd() * 512.0f);
+                        int a = (int)(crt_rnd() * 512.0f), b = (int)(crt_rnd() * 512.0f);
                         s->dir = (Vec3){ 400.0f * cos512(a) * cos512(b), 400.0f * sin512(a), 400.0f * cos512(a) * sin512(b) };   /* a point on a sphere of 400 */
                     }
                 }
@@ -2838,7 +2841,7 @@ static void fx_update(float dt, const float *eye)
             } else {                                                         /* 0x4792d0: 50 sparks a second in a box over the bonus, each 0.2 s */
                 float acc = e->acc + dt; int n = (int)(acc * 50.0f); e->acc = acc - n * 0.02f;
                 while (n-- > 0) {
-                    Vec3 p = { e->pos.x + fx_rnd() * 60.0f - 30.0f, e->pos.y + (fx_rnd() + 1.0f) * 25.0f, e->pos.z + fx_rnd() * 60.0f - 30.0f };
+                    Vec3 p; p.x = e->pos.x + crt_rnd() * 60.0f - 30.0f; p.y = e->pos.y + (crt_rnd() + 1.0f) * 25.0f; p.z = e->pos.z + crt_rnd() * 60.0f - 30.0f;   /* x, y, z (0x47936a..0x479398) */
                     if (!fx_new(0.2f, p, 2)) break;
                 }
             }
@@ -2902,7 +2905,7 @@ void game_smoke_ring(Vec3 pos, Vec3 normal, int kind, float t0, float life)
         FxRec *r = fx_new(life, pos, FX_RING); if (!r) continue;
         float c = cos512(a), s = sin512(a), q = k_ring[kind].size * 0.25f;
         r->age = t0; r->dir = (Vec3){ X.x * c + Y.x * s, X.y * c + Y.y * s, X.z * c + Y.z * s };
-        r->size = fx_rnd() * q * 2.0f - q; r->rot = (i * 5000) & 511; r->shape = kind;
+        r->size = crt_rnd() * q * 2.0f - q; r->rot = (i * 5000) & 511; r->shape = kind;
     }
     if (wenv("WOODY_FXLOG")) printf("smoke ring kind %d (%d clouds) at %.0f %.0f %.0f", kind, (int)ceilf(n), pos.x, pos.y, pos.z), puts("");
 }
@@ -2964,7 +2967,7 @@ static void exhaust_glow_flames(Vec3 P0, Vec3 d, int size_idx, int mode_state, f
     hud_world_spr(32, p, sz, 512 - (int)(ph[0] * 512.0f), one, 1.0f - 0.2f * sin512((int)(ph[0] * 256.0f)), 7, NULL, 0);   /* camera facing */
     sz = mode_state == 1 ? s * C : mode_state == 3 ? 2 * C : C;
     hud_world_spr(32, p, sz, (int)(ph[1] * 512.0f), one, 1.0f - 0.2f * sin512((int)(ph[1] * 255.0f)), 6, nrm, 0);    /* across the trail */
-    float r = fx_rnd() * 10.0f - 5.0f; int mode = mode_state == 3 ? 0x12 : 0x13;
+    float r = crt_rnd() * 10.0f - 5.0f; int mode = mode_state == 3 ? 0x12 : 0x13;
     sz = (mode_state == 1 ? s * A : mode_state == 3 ? 1.3f * A : A) + r;     /* 0x4758b8: the ramp scales the table size, the +-5 comes on top */
     float half = sz * cos512(mode == 0x12 ? 64 : 37) - sz * 0.015625f;  /* [0x5e823c]+0x800[mode]: the flame starts at P0 and trails back along d */
     float q[3] = { P0.x + d.x * half, P0.y + d.y * half, P0.z + d.z * half };
@@ -2999,7 +3002,7 @@ static void board_fx_draw(float dt)
         for (int k = n - 1; k >= 0; k--) {                                   /* the puffs, spread from P0 + 45 d back towards the previous position */
             float f = (float)k / (float)n, dist = f * len + A;
             FxRec *pf = fx_new(0.2f, (Vec3){ P0.x + d.x * dist, P0.y + d.y * dist, P0.z + d.z * dist }, FX_BOARD_PUFF); if (!pf) continue;
-            pf->age = k * dt / n; pf->rot = (int)(fx_rnd() * 512.0f);
+            pf->age = k * dt / n; pf->rot = (int)(crt_rnd() * 512.0f);
             e->prev[i] = e->size_idx == 9 || e->size_idx == 6 ? (Vec3){ P0.x + D.x, P0.y + D.y, P0.z + D.z } : pf->pos;   /* 0x475c2c */
         }
     }
@@ -3021,11 +3024,11 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; int n = (int)(e->acc * 50.0f); e->acc -= n * 0.02f;
         while (n-- > 0) {
             FxRec *p = fx_new(0.8f, e->pos, FX_STEP_PUFF); if (!p) continue;
-            p->age = fx_rnd() * 0.2f;
-            float s = e->foot == 0 ? fx_rnd() * 15.0f + 5.0f : -5.0f - fx_rnd() * 15.0f;
+            p->age = crt_rnd() * 0.2f;
+            float s = e->foot == 0 ? crt_rnd() * 15.0f + 5.0f : -5.0f - crt_rnd() * 15.0f;
             p->pos = (Vec3){ e->pos.x + A.x * s, e->pos.y + A.y * s, e->pos.z + A.z * s };
             p->dir = (Vec3){ -e->dir.x, -e->dir.y, -e->dir.z };             /* they drift back where he came from */
-            p->rot = (int)(fx_rnd() * 512.0f);
+            p->rot = (int)(crt_rnd() * 512.0f);
         }
         break; }
     case FX_STEP_PUFF: {                                                     /* 0x47e370: 100 back and 30 up over 0.8 s, faint and additive */
@@ -3048,26 +3051,26 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; e->acc2 += dt; e->acc3 += dt;
         int n = (int)(e->acc * 33.0f); e->acc -= n * 0.030303f;
         while (n-- > 0) {
-            FxRec *c = fx_new((fx_rnd() + 1.0f) * 0.3f, e->pos, FX_PECK_CHIP); if (!c) continue;
-            int a = (int)(fx_rnd() * 511.0f);
+            FxRec *c = fx_new((crt_rnd() + 1.0f) * 0.3f, e->pos, FX_PECK_CHIP); if (!c) continue;
+            int a = (int)(crt_rnd() * 511.0f);
             c->pos = (Vec3){ e->pos.x + cos512(a) * 10.0f, e->pos.y, e->pos.z + sin512(a) * 10.0f };
             c->dir = (Vec3){ cos512(a), 0, sin512(a) };                      /* level and outward, whatever the wall */
-            c->rot = (int)(fx_rnd() * 511.0f);
+            c->rot = (int)(crt_rnd() * 511.0f);
         }
         n = (int)(e->acc2 * 50.0f); e->acc2 -= n * 0.02f;
         while (n-- > 0) fx_new(0.05f, e->pos, FX_PECK_FLASH);
         n = (int)(e->acc3 * 8.0f); e->acc3 -= n * 0.125f;                    /* 0.2 s at 8 a second: one hole per peck */
         while (n-- > 0) {
-            float hold = fx_rnd() * 0.3f + 5.0f, v = fx_rnd() * 20.0f - 10.0f; Vec3 U = fx_plane_u(e->n);
+            float hold = crt_rnd() * 0.3f + 5.0f, v = crt_rnd() * 20.0f - 10.0f; Vec3 U = fx_plane_u(e->n);
             FxRec *h = fx_new(hold + 4.0f, (Vec3){ e->pos.x + U.x * v, e->pos.y + U.y * v, e->pos.z + U.z * v }, FX_PECK_HOLE); if (!h) continue;
-            h->D = hold; h->n = e->n; h->rot = (int)(fx_rnd() * 511.0f);
+            h->D = hold; h->n = e->n; h->rot = (int)(crt_rnd() * 511.0f);
         }
         break; }
     case FX_PECK_CHIP: {                                                     /* 0x479670: a splinter on an arc 80 out and 100 high */
         float pos[3] = { e->pos.x + u * e->dir.x * 80.0f, e->pos.y + sin512((int)(u * 255.0f)) * 100.0f, e->pos.z + u * e->dir.z * 80.0f };
         /* the original never sets the rotation here and draws with whatever S+0x224 the previous sprite left; the port
          * takes the chip's own rolled angle (+0x20) */
-        hud_world_spr(25, pos, fx_rnd() * 5.0f + 10.0f, e->rot, one, 1.0f, 0xf, NULL, 0);
+        hud_world_spr(25, pos, crt_rnd() * 5.0f + 10.0f, e->rot, one, 1.0f, 0xf, NULL, 0);
         break; }
     case FX_PECK_FLASH:                                                      /* 0x479760 */
         hud_world_spr(18, &e->pos.x, 80.0f, 0, one, 0.8f, 3, NULL, 0);
@@ -3083,10 +3086,10 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; int n = (int)(e->acc * 400.0f); e->acc -= n * 0.0025f;
         while (n-- > 0) {
             FxRec *d = fx_new(0.7f, e->pos, FX_DEBRIS); if (!d) continue;
-            d->size = fx_rnd() * 50.0f + 80.0f;
-            d->foot = (int)(fx_rnd() * 2.0f) != 0 ? 16 : 17;                 /* the image */
-            d->rot = (int)(fx_rnd() * 511.0f);
-            int a = (int)(fx_rnd() * 255.0f), b = (int)(fx_rnd() * 511.0f); float r = fx_rnd() * 150.0f + 20.0f;
+            d->size = crt_rnd() * 50.0f + 80.0f;
+            d->foot = (int)(crt_rnd() * 2.0f) != 0 ? 16 : 17;                 /* the image */
+            d->rot = (int)(crt_rnd() * 511.0f);
+            int a = (int)(crt_rnd() * 255.0f), b = (int)(crt_rnd() * 511.0f); float r = crt_rnd() * 150.0f + 20.0f;
             if (u < 0.8f) { d->D = 600.0f; d->dir = (Vec3){ cos512(a), sin512(a), cos512(a) * sin512(b) }; }   /* the upper half, not normalised */
             else { d->D = 40.0f; d->dir = (Vec3){ 0, 1, 0 }; }             /* the last fifth only rises */
             d->pos = (Vec3){ e->pos.x + cos512(a) * r, e->pos.y + sin512(a) * r, e->pos.z + cos512(a) * sin512(b) * r };
@@ -3101,7 +3104,7 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; int n = (int)(e->acc * 60.0f); e->acc -= n * 0.0166667f;
         while (n-- > 0) {
             FxRec *b = fx_new(2.0f, e->pos, FX_BURN); if (!b) continue;
-            Vec3 d = { fx_rnd() * 2.0f - 1.0f, 0, 0 }; d.y = fx_rnd() * 2.0f - 0.5f; d.z = fx_rnd() * 2.0f - 1.0f;
+            Vec3 d = { crt_rnd() * 2.0f - 1.0f, 0, 0 }; d.y = crt_rnd() * 2.0f - 0.5f; d.z = crt_rnd() * 2.0f - 1.0f;
             float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); if (l > 0) { d.x /= l; d.y /= l; d.z /= l; }
             b->dir = d; b->pos = (Vec3){ e->pos.x + d.x * 300.0f, e->pos.y + d.y * 300.0f, e->pos.z + d.z * 300.0f };
         }
@@ -3113,9 +3116,9 @@ static void fx_particle(FxRec *e, float u, float dt)
                 e->h += 0.025f;
                 Vec3 p = { e->pos.x + e->dir.x * e->h * 1200.0f, e->pos.y + e->dir.y * e->h * 1200.0f, e->pos.z + e->dir.z * e->h * 1200.0f };
                 FxRec *k = fx_new(0.2f, p, FX_TRAIL_SMOKE);
-                if (k) { k->size = fx_rnd() * 20.0f + 40.0f; k->R = 0.3f; k->rot = (int)(fx_rnd() * 512.0f); }
+                if (k) { k->size = crt_rnd() * 20.0f + 40.0f; k->R = 0.3f; k->rot = (int)(crt_rnd() * 512.0f); }
                 k = fx_new(0.15f, p, FX_TRAIL_SPARK);
-                if (k) { k->size = fx_rnd() * 20.0f + 60.0f; k->R = 1.0f; k->rot = (int)(fx_rnd() * 512.0f); }
+                if (k) { k->size = crt_rnd() * 20.0f + 60.0f; k->R = 1.0f; k->rot = (int)(crt_rnd() * 512.0f); }
                 if (e->h >= 0.1f) {                                          /* the next leg starts at the end of this one */
                     e->pos.x += e->dir.x * 120.0f; e->pos.y += e->dir.y * 120.0f; e->pos.z += e->dir.z * 120.0f;
                     e->dir.y -= 0.2f; float l = sqrtf(e->dir.x * e->dir.x + e->dir.y * e->dir.y + e->dir.z * e->dir.z);
@@ -3150,7 +3153,7 @@ static void fx_particle(FxRec *e, float u, float dt)
             Vec3 P = pl->pos, d = { g_fx_eye.x - P.x, g_fx_eye.y - P.y, g_fx_eye.z - P.z }, X, Y;   /* towards the camera, 3D */
             float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); if (l > 0) { d.x /= l; d.y /= l; d.z /= l; }
             fx_axes(d, &X, &Y);
-            float jit = fx_rnd() * 20.0f - 10.0f;                            /* one per frame for all six glows */
+            float jit = crt_rnd() * 20.0f - 10.0f;                            /* one per frame for all six glows */
             int row = ph == 1 ? 12 : 0, head = ph == 1 ? 40 : 472;           /* A: head tilted 40/512 one way, B: the other */
             for (int i = 0; i < 6; i++) {
                 const float *o = off[row + i];
@@ -3163,11 +3166,12 @@ static void fx_particle(FxRec *e, float u, float dt)
         /* 0x477d9d..0x477dc6: 0x498790(kind 0, S+0x208, white, rnd * 100 + 200) every frame, never drawn by the original (LIGHTING.md 7).
          * S+0x208 is the position of the shared sprite object, so in a skeleton phase the last bone's glow (the right leg) and
          * in a model phase whatever effect drew a sprite last - this frame or an earlier one */
-        { float lp[3]; hud_last_sprite_pos(lp); rnd_light_add(0, (Vec3){ lp[0], lp[1], lp[2] }, white255, fx_rnd() * 100.0f + 200.0f); }
+        { float lp[3]; hud_last_sprite_pos(lp); rnd_light_add(0, (Vec3){ lp[0], lp[1], lp[2] }, white255, crt_rnd() * 100.0f + 200.0f); }
         break; }
     case FX_FLAME: {                                                         /* 0x47cd00: rises 40 a second, shrinks to nothing, white -> red, additive */
         e->pos.y += dt * 40.0f;                                              /* +0xc += dt * 0x4ab294 */
-        float pos[3] = { e->pos.x + fx_rnd() * u, e->pos.y, e->pos.z + fx_rnd() * u }, rgb[3] = { 0.5f, 0.5f - u * 0.5f, 0.5f - u * 0.5f };
+        float pos[3], rgb[3] = { 0.5f, 0.5f - u * 0.5f, 0.5f - u * 0.5f };
+        pos[0] = e->pos.x + crt_rnd() * u; pos[1] = e->pos.y; pos[2] = e->pos.z + crt_rnd() * u;   /* x (0x47cd4b), then z (0x47cd66) */
         hud_world_spr(12, pos, (1.0f - u) * e->R, 0, rgb, 1.0f, 3, NULL, 0);  /* image 0x1000c, mode 0x12, flags 3: camera facing, own colour */
         break; }
     }
@@ -3194,10 +3198,10 @@ static void fireball_draw(Shot *s, float dt)
     if (n > 32) n = 32;
     for (int k = 0; k < n; k++) {
         float f = (float)k / n; Spark *p = &g_sparks[g_spark_next++ % 256];
-        p->pos.x = s->pos.x - f * s->dir.x * dist + (float)msvc_rand(NULL) / 32767.0f * 20.0f - 10.0f;
-        p->pos.y = s->pos.y - f * s->dir.y * dist + (float)msvc_rand(NULL) / 32767.0f * 20.0f - 10.0f;
-        p->pos.z = s->pos.z - f * s->dir.z * dist + (float)msvc_rand(NULL) / 32767.0f * 20.0f - 10.0f;
-        p->rot = (float)(int)((float)msvc_rand(NULL) / 32767.0f * 512.0f) / 512.0f; p->t = 1e-4f;
+        p->pos.x = s->pos.x - f * s->dir.x * dist + crt_rnd() * 20.0f - 10.0f;
+        p->pos.y = s->pos.y - f * s->dir.y * dist + crt_rnd() * 20.0f - 10.0f;
+        p->pos.z = s->pos.z - f * s->dir.z * dist + crt_rnd() * 20.0f - 10.0f;
+        p->rot = (float)(int)(crt_rnd() * 512.0f) / 512.0f; p->t = 1e-4f;
     }
     s->fb_prev = s->pos;
 }
@@ -3371,7 +3375,7 @@ static void rockets_draw(float dt)
             FxRec *pf = fx_new(0.2f, (Vec3){ m.x + t.x * dist, m.y + t.y * dist, m.z + t.z * dist }, FX_BOARD_PUFF); if (!pf) continue;
             pf->age = k * dt / n;                                                /* 0x475bbf */
             r->prev_p1 = (Vec3){ m.x + d.x, m.y + d.y, m.z + d.z };              /* 0x475c58 */
-            pf->rot = (int)(fx_rnd() * 512.0f);                                  /* 0x475c79 */
+            pf->rot = (int)(crt_rnd() * 512.0f);                                  /* 0x475c79 */
         }
     }
 }
@@ -3456,7 +3460,7 @@ static void anim_sounds(Instance *ii)
             memcpy(&t, &e[1], 4); memcpy(&lo, &e[3], 4); memcpy(&hi, &e[4], 4); memcpy(&vol, &e[5], 4); memcpy(&pitch, &e[6], 4); memcpy(&dmin, &e[7], 4);
             int hit = tf > t0 ? (t >= t0 && t < tf) : (t >= t0 || t < tf);
             if (hit) {
-                if (r < 0) { r = (float)msvc_rand(NULL) / 32767.0f * 100.0f - 1.0f; if (r < 0) r = 0; }
+                if (r < 0) { r = crt_rnd() * 100.0f - 1.0f; if (r < 0) r = 0; }
                 if (r >= lo && r < hi) {
                     int perso = g_player && g_player->inst == ii;
                     audio_play(e[2], ii, 0, vol, (float)pitch * 0.01f, perso ? NULL : &ii->position.x, dmin * 0.01f, 0);
@@ -3744,8 +3748,6 @@ static void on_msg(EkoVM *vm, const EkoMsg *m, void *user)
     }
 }
 static void on_warn(EkoVM *vm, const char *s, void *user) { (void)vm; (void)user; printf("VM warning: %s\n", s); }
-static uint32_t g_seed = 1;
-static uint32_t msvc_rand(void *user) { (void)user; g_seed = g_seed * 214013u + 2531011u; return (g_seed >> 16) & 0x7fff; }
 
 /* one loaded level: everything that is torn down and rebuilt on a level change (the window and GL context stay) */
 typedef struct {
@@ -3776,12 +3778,15 @@ static int level_load(Level *L, const char *dir, const char *lvl)
     snprintf(path, sizeof path, "%s/%s/code", dir, lvl);
     size_t codesz; L->code = read_all(path, &codesz);
     if (!L->code || eko_load(&L->vm, L->code, codesz)) { fprintf(stderr, "cannot load %s\n", path); free(L->code); ins_free(&g_ins); gel_free(&L->gel); tex_free(&L->tex); return -1; }
-    L->vm.on_msg = on_msg; L->vm.on_warn = on_warn; L->vm.rand_fn = msvc_rand; g_vm = &L->vm;
+    L->vm.on_msg = on_msg; L->vm.on_warn = on_warn; g_vm = &L->vm;   /* RANDOM 0x443c74 draws from crt_rand(), the one stream */
     printf("%s: %u polys, %u verts, %u textures, %u models, %u slots, %u script objects\n", lvl, L->gel.npolys, L->gel.nverts, L->tex.ngroups, g_ins.nmodels, g_ins.nslots, L->vm.nobj);
     snprintf(path, sizeof path, "%s/%s/%s.lit", dir, lvl, lvl); L->have_lit = lit_load(&L->lit, path) == 0;
     snprintf(path, sizeof path, "%s/%s/%s.vis", dir, lvl, lvl); L->have_vis = vis_load(&L->vis, path, L->gel.nsectors) == 0;   /* 0x408260: what each sector can see */
     if (wenv("WOODY_CELLLOG")) printf("  gel: %u cells, %u sectors, %u kd nodes | lit: %u lights, %u sector light lists\n", L->gel.ncells, L->gel.nsectors, L->gel.nkd, L->lit.nlights, L->lit.nsectors);
     rnd_init(&L->rnd, &L->tex, &L->gel, &g_ins, L->have_lit ? &L->lit : NULL, L->have_vis ? &L->vis : NULL);
+    for (int i = 0; i < 50 * 6; i++) crt_rand();       /* 0x40456e -> 0x4367f0: [0x4b3200] = 50 records of six rand() / 32767 floats into [0x54ba28],
+                                                        * which nothing reads (only Unload frees it), at every level load before the script init:
+                                                        * they only move the stream on (docs/RANDOM.md) */
     water_reset(&L->tex); L->rnd.post_models = water_draw;   /* class 60 (water.c) */
     L->rnd.spr_count = hud_wq_count; L->rnd.spr_quad = hud_wq_quad; L->rnd.spr_draw = hud_wq_draw; L->rnd.spr_done = hud_wq_done;   /* the world sprites (hud.c) */
     L->rnd.on_drawn = storm_rod_drawn;                       /* class 80 vt[26] 0x452010: the rod colour, per drawn rod (storm.c) */

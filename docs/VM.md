@@ -144,7 +144,8 @@ Source of the volume events: `0x430210` (bounding-volume test per actor, `push 0
 - `src/ekovm.c` + `src/ekovm.h`: C implementation with the same semantics (including the quirks:
   double init pass, `FOREACH` terminates the enclosing run, wake list reversed, queue cap of 1280
   messages with a warning). `src/ekorun.c` is a test harness; traces are identical to the Python emulator.
-- Both use the MSVC `rand()` LCG (`seed*214013+2531011`) so `RANDOM` is deterministically comparable.
+- Both use the MSVC `rand()` LCG (`seed*214013+2531011`, seed 1) so `RANDOM` is deterministically comparable; the C VM
+  draws from `crt_rand()` (`src/crtrand.h`), the one stream the whole game shares, as in the exe (docs/RANDOM.md).
 
 ## 7. What's still missing for a 1:1 reimplementation
 

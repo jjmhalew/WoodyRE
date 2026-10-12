@@ -17,6 +17,7 @@
 #include "enemy.h"
 #include "player.h"
 #include "audio.h"
+#include "crtrand.h"
 
 #define PI_F 3.14159265f
 
@@ -105,9 +106,9 @@ static float state_len(const Enemy *e)
 /* ---- behaviours (ENEMY.md 5): 0 Dwalen (wander with a leash around home), 1 Achtervolgen (chase), 2 Stilstaan ---- */
 static void wander_choose(Enemy *e)                                  /* 0x41c180(-1): walking and idling alternate */
 {
-    BossState *b = &e->b; int a = b->w_act > 5 ? rand() % 5 : 6 + (rand() & 1);
+    BossState *b = &e->b; int a = b->w_act > 5 ? crt_mod(5) : 6 + crt_mod(2);   /* 0x41c1dc: one draw, rand() % the summed weights */
     b->w_act = a; int n = wander_rec(e, a); b->w_t = n < 0 ? 0 : anim_len(e, n);
-    if (a == 7) { float r = enemy_sensor_random_free(e); e->want_ang = r >= 0 ? r : (float)(rand() % 6283) * 0.001f; }   /* 0x41c249: a free sensor direction, else 0x41ba10 */
+    if (a == 7) { float r = enemy_sensor_random_free(e); e->want_ang = r >= 0 ? r : (float)crt_mod(6283) * 0.001f; }   /* 0x41c249: a free sensor direction, else 0x41ba10 */
 }
 /* Every caller of these two (Reset 0x40eda7, states 0 0x40eff6, 2 0x40f0af and 3 0x40f3c6) first calls the behaviour's vtbl[6]
  * (Wander 0x41c090, Chase 0x41bc60), and both begin with 0x41b2b0, which zeroes the behaviour's knockback timer Behav+0x1c
@@ -508,7 +509,6 @@ static float ac_len(const Instance *in, const PRec *tab, int n)      /* AnimLen 
     return (uint32_t)s < m->nanims ? m->anims[s].duration_s / tab[n].speed : 0;
 }
 
-static float frand(void) { return (float)rand() / (float)RAND_MAX; }  /* 0x43ff40 */
 static float start_angle(const Instance *in)                         /* PostLoad 0x419ec1: the H angle from the placement, as in boss_init */
 {
     Quat q = in->quat; float l = sqrtf(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w); if (l > 1e-6f) { q.x /= l; q.y /= l; }
@@ -617,7 +617,7 @@ void boss15_update(Enemy *e, Player *pl, Vec3 cam, float dt)
         if (game_var_get(b->mail_var) == 4) { b->st = 2; ac_request(b, g_r15, 0); audio_fx(44, NULL, NULL); break; }
         /* fallthrough: the same taunts as state 4 */
     case 4:
-        if ((b->t_taunt -= dt) < 0) { b->t_taunt = frand() * 10.0f + 5.0f; ac_request(b, g_r15, frand() * 2.0f < 1.0f ? 1 : 2); }   /* every 5..15 s */
+        if ((b->t_taunt -= dt) < 0) { b->t_taunt = crt_rnd() * 10.0f + 5.0f; ac_request(b, g_r15, crt_rnd() * 2.0f < 1.0f ? 1 : 2); }   /* every 5..15 s */
         else ac_request(b, g_r15, 0);
         if (b->st == 1) break;
         {   /* the attack cycle 0x40e2a6 */

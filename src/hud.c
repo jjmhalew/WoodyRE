@@ -2,6 +2,7 @@
  * Everything in 640x480 virtual coordinates, origin top left. Colours are 0xAARRGGBB with RGB 0x80 = 1.0 (docs/HUD_TEXT.md 5.2). */
 #include "hud.h"
 #include "texpack.h"
+#include "crtrand.h"
 #include "plat.h"
 #include <GL/gl.h>
 #include <stdio.h>
@@ -538,7 +539,6 @@ static struct {
 
 void hud_anim_reset(void) { memset(&A, 0, sizeof A); }
 
-static float frnd(void) { return (float)rand() / (float)RAND_MAX; }
 static float costab(int k) { return (float)cos(6.2831853 * (k & 511) / 512.0); }   /* the engine's 512-entry table at [0x5e823c] */
 
 /* a sprite into an explicit destination rect (0x480a10; 0x460480 is the same thing with a uniform scale) */
@@ -595,11 +595,11 @@ static void fly_trail(int kind, float dx, float dy, float w, float h)  /* 0x47b7
         if (A.ngh < 128) {
             int i = A.ngh++;
             A.gh[i].mode = mode; A.gh[i].t = A.fly[kind].t - ut;        /* born already this old */
-            r = costab((int)(frnd() * 180.0f)) + 1.0f;
+            r = costab((int)(crt_rnd() * 180.0f)) + 1.0f;
             A.gh[i].w0 = r * gw * 0.25f; A.gh[i].h0 = r * gh * 0.25f;
             if (!mode) {                                               /* 0x47b800: a blob beside the icon that shrinks away in 0.3 s */
-                r = costab((int)(frnd() * 180.0f)); A.gh[i].x = dx < 0 ? gx + r * 10.0f + gw * 0.25f : gx - gw * 0.25f - r * 10.0f;
-                r = costab((int)(frnd() * 180.0f)); A.gh[i].y = dy < 0 ? gy + r * 10.0f + gh * 0.25f : gy - gh * 0.25f - r * 10.0f;
+                r = costab((int)(crt_rnd() * 180.0f)); A.gh[i].x = dx < 0 ? gx + r * 10.0f + gw * 0.25f : gx - gw * 0.25f - r * 10.0f;
+                r = costab((int)(crt_rnd() * 180.0f)); A.gh[i].y = dy < 0 ? gy + r * 10.0f + gh * 0.25f : gy - gh * 0.25f - r * 10.0f;
                 A.gh[i].vx = dx / FLY_DUR * 0.2f; A.gh[i].vy = dy / FLY_DUR * 0.2f;
                 A.gh[i].life = 0.3f; A.gh[i].dw = A.gh[i].w0 / 0.3f; A.gh[i].dh = A.gh[i].h0 / 0.3f;
             } else {                                                   /* 0x47ba10: two glows winding 3.5 turns around the flight line, crawling at a fifth of its speed */

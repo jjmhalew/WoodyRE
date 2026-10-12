@@ -20,6 +20,7 @@
 #include "player.h"
 #include "hud.h"
 #include "audio.h"
+#include "crtrand.h"
 
 #define MAXZ 64                                             /* 0x451aad: list 0x5e58cc[0x40] */
 typedef struct { Instance *inst; float r, h, glow; int inside; uint32_t upd; } Zone;   /* +0x108, +0x10c, +0x110, +0x114 */
@@ -32,13 +33,11 @@ typedef struct { int on, dirty, n; float age, life, acc; Vec3 a, b, p[41]; int k
 typedef struct { int on, dirty, phase; float age, life, delay; Vec3 p1, p2, p3, loc[14]; } Arc;   /* particle 0x46df80 -> 0x46da00 */
 static Bolt g_bolt[16]; static Arc g_arc[40];
 static float g_T;                                           /* [0x5e85d0]: += dt, modulo 2 s (0x46d040) */
-static uint32_t g_seed = 0x5707d;
 static int g_log = -1;
 static int g_actor_next;
 static uint32_t g_upd;                                             /* logic frames that ran storm_update (the rods' glow steps once per such frame) */
 static float g_rod_dt;
 
-static float rnd01(void) { g_seed = g_seed * 214013u + 2531011u; return (float)((g_seed >> 16) & 0x7fff) / 32767.0f; }   /* 0x43ff40 */
 static int log_on(void) { if (g_log < 0) g_log = wenv("WOODY_STORMLOG") != NULL; return g_log; }
 static Vec3 v3(float x, float y, float z) { return (Vec3){ x, y, z }; }
 static Vec3 vadd(Vec3 a, Vec3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
@@ -78,13 +77,13 @@ void storm_zone_param(Instance *in, int mode, int v)
 /* 0x46e030(t, first): the flash cycle restarts; t is the time until the next strike */
 static void flash_new(void)
 {
-    float d = rnd01() * 0.1f; if (d < 0.05f) d -= 0.1f; d += 0.3f;   /* 0.2..0.25 or 0.35..0.4 s */
-    F.rem = F.dur = d; F.inten = rnd01() * 40.0f;
+    float d = crt_rnd() * 0.1f; if (d < 0.05f) d -= 0.1f; d += 0.3f;   /* 0.2..0.25 or 0.35..0.4 s */
+    F.rem = F.dur = d; F.inten = crt_rnd() * 40.0f;
 }
 static void flash_start(float t, int first)
 {
     if (first) { F.t = 2.5f; F.t0 = t; } else F.t = F.t0 = t;
-    F.n = 2 - (int)(rnd01() * -2.0f);                               /* _ftol truncates: 2 or 3 flashes */
+    F.n = 2 - (int)(crt_rnd() * -2.0f);                               /* _ftol truncates: 2 or 3 flashes */
     F.k = 1; flash_new(); F.on = 1;
 }
 static void flash_colour(void)                                    /* 0x46e2a0 */
@@ -180,8 +179,8 @@ void storm_update(float dt, Player *pl, int frozen)
                     Vec3 c = z->inst->position; float span = z->h - 80.0f;
                     audio_fx(7, z->inst, &z->inst->position.x);     /* 0x451ebb: the rod's position, live like every 3D voice's */
                     for (int i = 0; i < 3; i++) {                   /* three arcs between random points of the rod, 0.2..1.2 s later */
-                        Vec3 A = v3(c.x, rnd01() * span + c.y + 80.0f, c.z), B = v3(c.x, rnd01() * span + c.y + 80.0f, c.z), C = v3(c.x, rnd01() * span + c.y + 80.0f, c.z);
-                        arc_spawn(B, C, A, rnd01() + 0.2f);
+                        Vec3 A = v3(c.x, crt_rnd() * span + c.y + 80.0f, c.z), B = v3(c.x, crt_rnd() * span + c.y + 80.0f, c.z), C = v3(c.x, crt_rnd() * span + c.y + 80.0f, c.z);
+                        arc_spawn(B, C, A, crt_rnd() + 0.2f);
                     }
                     Vec3 lo = v3(c.x, c.y + 80.0f, c.z), hi = v3(c.x, c.y + z->h, c.z);
                     arc_spawn(hi, hi, lo, 0); arc_spawn(lo, lo, hi, 0.4f);   /* down the rod at once, back up after 0.4 s */
@@ -230,14 +229,14 @@ static void bolt_draw(Bolt *o, const float *eye, float dt)          /* 0x46d520 
             Vec3 p;
             if (i == n - 1) p = o->b;
             else {
-                float ox = rnd01() * 180.0f - 90.0f, oy = rnd01() * 180.0f - 90.0f;
+                float ox = crt_rnd() * 180.0f - 90.0f, oy = crt_rnd() * 180.0f - 90.0f;
                 p = vadd(vadd(o->a, vmul(w, (float)(i + 1) * step * len)), vadd(vmul(u, ox), vmul(v, oy)));
             }
-            o->p[i + 1] = p; o->kind[i + 1] = (int)(rnd01() * 4.0f);
+            o->p[i + 1] = p; o->kind[i + 1] = (int)(crt_rnd() * 4.0f);
         }
         o->n = n; o->dirty = 0;
     }
-    float alpha = (rnd01() + 1.0f) * 0.5f;                          /* one flicker value per frame */
+    float alpha = (crt_rnd() + 1.0f) * 0.5f;                          /* one flicker value per frame */
     static const float white[3] = { 1, 1, 1 }, glow[3] = { 0.8f, 0.8f, 1.0f };
     for (int i = 0; i < o->n; i++) {
         /* line 0x471a10 flags 0xe00: bank 0 image 30 (0x1001e), half width 30, (1,1,1,alpha) at both ends, additive;
@@ -248,7 +247,7 @@ static void bolt_draw(Bolt *o, const float *eye, float dt)          /* 0x46d520 
          * S+0x260 = 0x12 is the SHAPE of the quad: the index into the corner-angle table [0x5e823c]+0x800 (0x470f1e..0x470f24,
          * filled at 0x4024bb: atan(2^(0x12/8 - 0x12%8)) = 45 deg), i.e. the plain square every other sprite uses; flags 3 =
          * camera facing + own colour, no flag 8 = additive ONE/ONE (0x4719c0). So the glow is drawn exactly like this. */
-        hud_world_spr_mode(0x12, 6, &o->b.x, rnd01() * 20.0f + 25.0f, 0, glow, 0.7f, 3, NULL, 0);
+        hud_world_spr_mode(0x12, 6, &o->b.x, crt_rnd() * 20.0f + 25.0f, 0, glow, 0.7f, 3, NULL, 0);
     }
 }
 static void arc_draw(Arc *o, const float *eye, float dt)            /* 0x46da00 */
@@ -260,20 +259,20 @@ static void arc_draw(Arc *o, const float *eye, float dt)            /* 0x46da00 
     int ph = u <= 0.25f ? 1 : u <= 0.5f ? 2 : u <= 0.75f ? 3 : 4;  /* a new shape each quarter of its life */
     if (ph != o->phase) { o->phase = ph; o->dirty = 1; }
     if (o->dirty) {
-        float ox0 = rnd01() * 100.0f - 50.0f, oy0 = rnd01() * 100.0f - 50.0f;
+        float ox0 = crt_rnd() * 100.0f - 50.0f, oy0 = crt_rnd() * 100.0f - 50.0f;
         for (int i = 0; i < 14; i++) {
             if (i == 0) { o->loc[i] = v3(0, 0, 0); continue; }
             if (i == 13) { o->loc[i] = v3(0, 0, 1); continue; }
             float t = i * 0.07692308f; int m = (int)(t * -256.0f);   /* cos[(128 - m) & 511] = -sin(pi t) */
             float c = cosf((float)((128 - m) & 0x1ff) * 0.012271846f);
-            float x = rnd01() * 10.0f - ox0 * c - 5.0f, y = rnd01() * 10.0f - oy0 * c - 5.0f;
+            float x = crt_rnd() * 10.0f - ox0 * c - 5.0f, y = crt_rnd() * 10.0f - oy0 * c - 5.0f;
             o->loc[i] = v3(x, y, t);
         }
         o->dirty = 0;
     }
     Vec3 P = vadd(o->p2, vmul(vsub(o->p3, o->p2), u));             /* the far end slides from p2 to p3 */
     Vec3 D = vsub(P, o->p1); float L = vlen(D);
-    float alpha = (rnd01() + 1.0f) * 0.5f;
+    float alpha = (crt_rnd() + 1.0f) * 0.5f;
     if (L <= 0) return;
     Vec3 w = vmul(D, 1.0f / L), bu, bv; basis(w, &bu, &bv);
     static const float col[3] = { 0.55f, 0.85f, 0.92f };

@@ -16,6 +16,7 @@
 #include "ambient.h"
 #include "player.h"
 #include "hud.h"
+#include "crtrand.h"
 
 typedef struct {
     Instance *in;
@@ -36,8 +37,6 @@ enum { K_BUTTERFLY = 1, K_MOTE, K_DROP, K_RIPPLE };
 static Amb g_amb[AMB_MAX]; static int g_namb;
 static unsigned g_frame;
 static int g_flylog; static float g_flyt;                                        /* WOODY_FLYLOG: the butterflies once a second */
-static uint32_t g_seed = 1;
-static float rnd01(void) { g_seed = g_seed * 214013u + 2531011u; return (float)((g_seed >> 16) & 0x7fff) / 32767.0f; }   /* 0x43ff40 */
 
 void ambient_reset(void) { g_namb = 0; g_flyt = 0; }                           /* the pool itself is emptied with the level (0x470d50) */
 
@@ -107,11 +106,11 @@ static void amb_rain_init(Amb *a)
     float zr = hi[2] - lo[2], dx = (hi[0] - lo[0]) * 0.2f, dy = (hi[1] - lo[1]) * 0.2f;   /* 0x4aab94 = 0.2 */
     int k = 0;
     for (int row = 0; row < 5; row++) for (int col = 0; col < 5; col++) for (int j = 0; j < 16; j++, k++) {
-        a->grid[k][0] = (rnd01() + (float)col) * dx + lo[0];
-        a->grid[k][1] = (rnd01() + (float)row) * dy + lo[1];
+        a->grid[k][0] = (crt_rnd() + (float)col) * dx + lo[0];
+        a->grid[k][1] = (crt_rnd() + (float)row) * dy + lo[1];
         a->grid[k][2] = zr;
     }
-    for (int j = 0; j < 400; j++) rnd01();                                       /* +0x128: 400 floats rnd*45 + 90, never read again */
+    for (int j = 0; j < 400; j++) crt_rnd();                                       /* +0x128: 400 floats rnd*45 + 90, never read again */
     a->zr = zr; a->rot = 0; a->acc = 0;
     switch (a->force) {                                                          /* jump table 0x472e18 */
     case 1: a->interval = 0.2f; break; case 2: a->interval = 0.15f; break; case 3: a->interval = 0.1f; break; case 4: a->interval = 0.05f; break;
@@ -145,10 +144,10 @@ void ambient_msg(Instance *in, int id, const uint32_t *args, int nargs)
 static void amb_butterfly(int ai, Vec3 w)
 {
     AmbFx *f = fx_new(K_BUTTERFLY, ai); if (!f) return;
-    f->age = rnd01() * 10.0f; f->life = 1e6f; f->pos = w;
-    f->dir.x = rnd01() * 2.0f - 1.0f; f->dir.y = rnd01() * 2.0f - 1.0f; f->dir.z = rnd01() * 2.0f - 1.0f;
+    f->age = crt_rnd() * 10.0f; f->life = 1e6f; f->pos = w;
+    f->dir.x = crt_rnd() * 2.0f - 1.0f; f->dir.y = crt_rnd() * 2.0f - 1.0f; f->dir.z = crt_rnd() * 2.0f - 1.0f;
     f->wander = 0;
-    f->img = (int)(rnd01() * 3.99f);                                             /* 0..3 = images 53..56 */
+    f->img = (int)(crt_rnd() * 3.99f);                                             /* 0..3 = images 53..56 */
     v_norm(&f->dir);
 }
 
@@ -182,9 +181,9 @@ static void amb_think_spawn(Amb *a, int ai)
     }
     while (a->live < a->count) {
         float p[3];
-        p[0] = rnd01() * (hi[0] - lo[0]) + lo[0];
-        p[2] = a->mode == 1 ? lo[2] : rnd01() * (hi[1] - lo[1]) + lo[2];         /* 0x472936: mode 1 = minZ; else the Y extent from minZ */
-        p[1] = rnd01() * zr + lo[1];
+        p[0] = crt_rnd() * (hi[0] - lo[0]) + lo[0];
+        p[2] = a->mode == 1 ? lo[2] : crt_rnd() * (hi[1] - lo[1]) + lo[2];         /* 0x472936: mode 1 = minZ; else the Y extent from minZ */
+        p[1] = crt_rnd() * zr + lo[1];
         if (n->npolys) {
             float d = p[0] * pl0[0] + p[1] * pl0[1] + p[2] * pl0[2] + pl0[3];
             if (d > 0) for (int q = 0; q < 3; q++) p[q] -= 2 * d * pl0[q];
@@ -194,10 +193,10 @@ static void amb_think_spawn(Amb *a, int ai)
         else {
             AmbFx *f = fx_new(K_MOTE, ai);                                       /* 0x47e160 */
             if (f) {
-                float s = a->fill ? rnd01() : 0.0f;
-                f->life = rnd01() * 2.0f + a->life0; f->age = f->life * s;      /* the first fill starts spread over the lifetime */
+                float s = a->fill ? crt_rnd() : 0.0f;
+                f->life = crt_rnd() * 2.0f + a->life0; f->age = f->life * s;      /* the first fill starts spread over the lifetime */
                 f->dir = N;
-                f->speed = rnd01() * 20.0f + 40.0f;                              /* 0x4a9994 = 20, 0x4ab294 = 40 */
+                f->speed = crt_rnd() * 20.0f + 40.0f;                              /* 0x4a9994 = 20, 0x4ab294 = 40 */
                 f->pos = (Vec3){ w.x + N.x * f->age * f->speed, w.y + N.y * f->age * f->speed, w.z + N.z * f->age * f->speed };
             }
         }
@@ -228,7 +227,7 @@ static void amb_think_rain(Amb *a, int ai, float dt)
             AmbFx *f = fx_new(K_DROP, ai);                                       /* 0x47e230 (normalises D once more) */
             if (f) { f->age = 0; f->life = 1.0f; f->pos = w; f->dir = d; v_norm(&f->dir); f->fallen = 0; f->len = len; f->speed = 4000.0f; }   /* 0x457a0000 */
         }
-        a->rot = (a->rot + (int)(rnd01() * 15.0f + 1.0f)) & 15;                 /* 0x4a9864 = 15 */
+        a->rot = (a->rot + (int)(crt_rnd() * 15.0f + 1.0f)) & 15;                 /* 0x4a9864 = 15 */
     }
 }
 
@@ -267,7 +266,7 @@ static int amb_butterfly_run(AmbFx *f, Amb *a, float dt)
 {
     const Instance *in = a->in;
     f->age += dt; f->wander += dt;
-    float r = rnd01(), k = dt * 60.0f;                                           /* the original rolls once per frame; normalised to 60 Hz here */
+    float r = crt_rnd(), k = dt * 60.0f;                                           /* the original rolls once per frame; normalised to 60 Hz here */
     if (dt > 0) {
         if (f->state == 0 && r <= 0.001f * k) f->state = 1;
         if (f->state == 2 && r <= 0.008f * k) {
@@ -281,9 +280,9 @@ static int amb_butterfly_run(AmbFx *f, Amb *a, float dt)
         if (f->wander > 0.3f) {
             f->wander -= 0.3f;
             float sx = f->dir.x < 0 ? -1.0f : 1.0f, ky, sz;
-            if (f->state == 1) ky = -0.8f; else ky = rnd01() * 2.0f - 1.0f > 0 ? 0.7f : -0.5f;
+            if (f->state == 1) ky = -0.8f; else ky = crt_rnd() * 2.0f - 1.0f > 0 ? 0.7f : -0.5f;
             sz = f->dir.z < 0 ? -1.0f : 1.0f;
-            float ax = rnd01() * sx * 3.5f, ay = rnd01() * ky * 3.5f, az = rnd01() * sz * 3.5f;
+            float ax = crt_rnd() * sx * 3.5f, ay = crt_rnd() * ky * 3.5f, az = crt_rnd() * sz * 3.5f;
             f->dir.x += ax; f->dir.y += ay; f->dir.z += az; v_norm(&f->dir);
         }
         f->pos.x += dt * f->dir.x * 100.0f; f->pos.y += dt * f->dir.y * 100.0f; f->pos.z += dt * f->dir.z * 100.0f;

@@ -20,10 +20,6 @@ static void on_msg(EkoVM *vm, const EkoMsg *m, void *user)
 }
 static void on_warn(EkoVM *vm, const char *s, void *user) { (void)vm; (void)user; fprintf(stderr, "warning: %s\n", s); }
 
-/* MSVC CRT rand(), as linked into Woody.exe: deterministic and shared with tools/ekovm.py */
-static uint32_t g_seed = 1;
-static uint32_t msvc_rand(void *user) { (void)user; g_seed = g_seed * 214013u + 2531011u; return (g_seed >> 16) & 0x7fff; }
-
 int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: ekorun <code file> [ticks]\n"); return 2; }
@@ -33,7 +29,7 @@ int main(int argc, char **argv)
     void *buf = malloc((size_t)sz); if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) { perror("read"); return 1; } fclose(f);
     EkoVM vm;
     if (eko_load(&vm, buf, (size_t)sz) != 0) { fprintf(stderr, "not an EKO CODE file\n"); return 1; }
-    vm.on_msg = on_msg; vm.on_warn = on_warn; vm.rand_fn = msvc_rand;
+    vm.on_msg = on_msg; vm.on_warn = on_warn;   /* RANDOM draws from crt_rand() (ekovm.c), seed 1 like tools/ekovm.py */
     eko_init(&vm);
     int ticks = 0, total = 0;
     if (argc > 2 && argv[2][0] == '@') {
