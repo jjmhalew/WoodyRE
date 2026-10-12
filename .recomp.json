@@ -1,0 +1,21 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Woody Woodpecker: Escape from Buzz Buzzard Park",
+  "wikidata": "Q8033716",
+  "system": "PC (Windows)",
+  "type": "port",
+  "original": [
+    { "region": "Europe", "revision": "1.00 (English)", "sha1": "709447367a74c02fb462a9dce34dc5cace62fcd0" },
+    { "region": "Spain", "revision": "1.00 data" },
+    { "region": "Brazil", "revision": "February 2002 data" },
+    { "region": "Poland", "revision": "February 2002 data" },
+    { "region": "Russia", "revision": "1C, January 2002 data" }
+  ],
+  "project": "WoodyRE",
+  "status": "released",
+  "targets": ["Windows", "Linux", "Steam Deck", "Android", "Switch"],
+  "approach": "Engine reimplemented in C from the reverse-engineered Woody.exe: script VM, all asset formats, renderer and game logic, traced against the original",
+  "maintainers": [{ "name": "jjmhalew", "link": "https://github.com/jjmhalew" }],
+  "notes": "Plays the whole game from your own CD at any resolution and frame rate, with controller support, rebindable controls, cutscene skipping and mods. The script VM's message stream is checked against the original with an own Win32 tracer, and a coverage map shows every function of Woody.exe by how far it is ported. The Switch build is experimental (homebrew).",
+  "tags": ["engine-rewrite", "platformer", "3d"]
+}
