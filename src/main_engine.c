@@ -4089,12 +4089,15 @@ int main(int argc, char **argv)
             #undef REL
             for (int k = 0; k < 256; k++) key_prev[k] = win.keys[k];
         }
-        /* PORT EXTRA (Gameplay page, skip cutscenes): the pause key during a cinematic fast-forwards it - every frame advances the
+        /* PORT EXTRA (Gameplay page, skip cutscenes): the pause key during a cutscene fast-forwards it - every frame advances the
          * largest step the clock takes anyway (0.1 s), behind a black picture and without sound, until the scene hands back to the
-         * player. The scripts time their events on the game clock (DELAYs, CINEMATIC.md 7), so they all still happen in order. */
-        if (g_gp.skip && !g_skip && g_level != 0 && M.page < 0 && cin_running() && (mk.esc_prs || (wenv("WOODY_SKIPAT") && g_now >= atof(wenv("WOODY_SKIPAT"))))) {
-            g_skip = 1; audio_rtc(-1); audio_master(0, g_opt.music * 0.01f); win_vsync(0); printf("  CUTSCENE skipped at %.2f s", g_now), puts(""); mk.esc_prs = 0; }
-        if (g_skip && !cin_running()) { g_skip = 0; opt_apply(); win_vsync(g_dnow.vsync); }
+         * player. The scripts time their events on the game clock (DELAYs, CINEMATIC.md 7), so they all still happen in order.
+         * A cutscene = a cinematic (1130) or a letterboxed script camera (520, mode 4: the player frozen, CAMERA_SCRIPT.md 3),
+         * which most of the game's scenes are (hub area gates, switch and door shots); not the free shots of 510 (mode 2). */
+        int cutscene = cin_running() || g_cam.mode == 4;
+        if (g_gp.skip && !g_skip && g_level != 0 && M.page < 0 && cutscene && !g_res.on && (mk.esc_prs || mk.ok || (wenv("WOODY_SKIPAT") && g_now >= atof(wenv("WOODY_SKIPAT"))))) {   /* the pause key or confirm (Enter, the jump key / pad A) */
+            g_skip = 1; audio_rtc(-1); audio_master(0, g_opt.music * 0.01f); win_vsync(0); printf("  CUTSCENE skipped at %.2f s (%s)", g_now, cin_running() ? "cinematic" : "script camera"), puts(""); mk.esc_prs = mk.ok = 0; }
+        if (g_skip && !cutscene) { g_skip = 0; opt_apply(); win_vsync(g_dnow.vsync); printf("  CUTSCENE over at %.2f s", g_now), puts(""); }
         if (g_skip) g_black_frame = 1;
         if (DBGKEY(VK_TAB) && !tab_prev && sel) {                                   /* next instance with animations */
             Instance *nxt = NULL; int found = 0;

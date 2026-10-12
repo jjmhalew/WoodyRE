@@ -25,16 +25,27 @@ the Russian fonts lack a capital Ж, so that label starts with another word).
 The original has no skip key for the real-time cinematics (CINEMATIC.md §3; only the House intro can be left through its
 menu). Their scripts time every event on the game clock: a cinematic starts with `1130`, the script writes its own
 timeline as `DELAYPOP (T − var)` on the 1/100 s clock (CINEMATIC.md §7), and the fight intros start the fight with such a
-delay (WWS object 344: `1600 − var118`). Jumping to the end would lose or reorder those events, so the skip **fast-forwards**:
-the pause key (Esc / Start) during a cinematic (`cin_running`, not in the House, no menu open) sets `g_skip`; until the
-cinematic hands back to the player, every frame advances **0.1 s** (the clamp the clock already uses on a slow frame),
+delay (WWS object 344: `1600 − var118`). Jumping to the end would lose or reorder those events, so the skip **fast-forwards**.
+
+What counts as a cutscene: a cinematic (`cin_running`), **or** a letterboxed script camera (message 520, camera mode 4,
+the player frozen: CAMERA_SCRIPT.md §3). The cinematics are rare (W1A has one, Buzz behind door 321); most of the scenes
+a player sees are script cameras: the hub area gates (WWS object 258: `26; 580 [cam, 2]; 520 [cam, 0, 11]` … `500`), the
+switch and door shots. Not counted: the 510 shots (mode 2, the player keeps control), Woody's door walks (camera tracks
+of actions 17 / 18, about a second) and the hub results (they wait for a key).
+
+The pause key (Esc / Start) or confirm (Enter, the jump key / pad A) during a cutscene (not in the House, no menu open)
+sets `g_skip`; until the scene hands back
+to the player, every frame advances **0.1 s** (the clamp the clock already uses on a slow frame),
 the frame cap and vsync are off, the 3D picture is black (`g_black_frame`), the sound effects are muted
 (`audio_master(0, music)`) and the cinematic's `/Rtc/` voice track stops. At the end the volumes and vsync come back and
 the scene's own fade-in shows the player. The pause menu does not open from that key press.
 
 Checked: W1B fight intro skipped at 2.5 s: the boss starts at the same game time (22.0 vs 22.1 s), the same script
 messages in the same numbers (only reordered within a 0.1 s step); a real Esc at 4 s puts Woody in the fight at 8 s
-(wall clock). Test hook: `WOODY_SKIPAT=T` skips the first cinematic running at game time ≥ T.
+(wall clock). WWS area gate (`--pos -106 100 -2223`): skipped at 0.5 s, over at 4.2 s, the same messages in the same
+numbers and Woody at the same spot at 25 s; a real Esc 2 s in gives control back at once, without the pause menu. Test hook:
+`WOODY_SKIPAT=T` skips the first cutscene running at game time ≥ T. The log says `CUTSCENE skipped at … (cinematic|script
+camera)` and `CUTSCENE over at …`.
 
 ## 3. Lasers and blasts
 
