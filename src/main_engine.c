@@ -731,7 +731,7 @@ static void in_pad_poll(const Window *w, double tl)              /* PORT EXTRA: 
         double t, d = 0.08; float x, y; unsigned m; int used;
         if (sscanf(s, " %lf:%f:%f:%i%n", &t, &x, &y, (int *)&m, &used) != 4) break;
         s += used; if (*s == ':' && sscanf(s, ":%lf%n", &d, &used) == 1) s += used;
-        if (tl >= t && tl < t + d) { if (!g_in.pad.kind) g_in.pad.kind = PADK_DS5; g_in.pad.lx = x; g_in.pad.ly = y; g_in.pad.buttons = m; }
+        if (tl >= t && tl < t + d) { if (!g_in.pad.kind) g_in.pad.kind = PADK_DS5; g_in.pad.lx = x; g_in.pad.ly = y; g_in.pad.buttons = m; g_in.pad.touch = 0; }
     }
     for (const char *s = wenv("WOODY_RSTICK"); s && *s; ) {   /* testing: WOODY_RSTICK="T:RX:RY[:D] ...", the right stick likewise (default 0.5 s) */
         double t, d = 0.5; float x, y; int used;
@@ -754,7 +754,7 @@ static void in_frame(const Window *w, int fly, double now, double tl)   /* 0x402
             for (int s = 0; s < 4 && g_in.bind[a][s]; s++) { int c = g_in.bind[a][s]; if (c >= IN_JOY && (g_in.jbtn >> (c - IN_JOY) & 1)) { in_set(a, 1.0f); if (a == 4) in_set(12, 1.0f); break; } } }
     }
     if (g_in.pad.kind != PADK_NONE) {                            /* PORT EXTRA: the pads after the joystick, before the keyboard */
-        float x = in_deadzone(g_in.pad.lx, g_pad_dz * 0.01f), y = in_deadzone(g_in.pad.ly, g_pad_dz * 0.01f);
+        float x = g_in.pad.touch ? g_in.pad.lx : in_deadzone(g_in.pad.lx, g_pad_dz * 0.01f), y = g_in.pad.touch ? g_in.pad.ly : in_deadzone(g_in.pad.ly, g_pad_dz * 0.01f);
         if (x > 0) in_set(1, x); else if (x < 0) in_set(0, x);   /* the left stick as the joystick's X / Y */
         if (y > 0) in_set(3, y); else if (y < 0) in_set(2, y);
         for (int a = 0; a < 12; a++)

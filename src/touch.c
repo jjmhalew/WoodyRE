@@ -83,11 +83,8 @@ void touch_event(const void *ev, int width, int height)
         else if (x < T.W * 0.5f && T.stick < 0) { T.f[k].ctl = 0; T.stick = k; T.sx = T.kx = x; T.sy = T.ky = y; }
         else T.f[k].ctl = -1;
     } else if (k >= 0 && e->type == SDL_FINGERMOTION) {
-        if (T.f[k].ctl == 0) {
-            float R = 0.14f * unit(), dx = x - T.sx, dy = y - T.sy, d = sqrtf(dx * dx + dy * dy);
-            if (d > R) { T.sx = x - dx / d * R; T.sy = y - dy / d * R; }   /* the base follows a finger that goes further */
-            T.kx = x; T.ky = y;
-        } else if (T.f[k].ctl > 0) {                                        /* slide between the face buttons */
+        if (T.f[k].ctl == 0) { T.kx = x; T.ky = y; }                       /* the base stays where the thumb went down, the knob stops at its rim */
+        else if (T.f[k].ctl > 0) {                                        /* slide between the face buttons */
             Btn bs[NBTN]; layout(bs);
             if (bs[T.f[k].ctl - 1].face) { int b = hit(x, y, 1); if (b >= 0) T.f[k].ctl = 1 + b; }
         }
@@ -108,12 +105,18 @@ void touch_pad(PadState *st, int real_pad_used)
     float lx = 0, ly = 0;
     if (T.stick >= 0) {
         float R = 0.14f * unit(); lx = (T.kx - T.sx) / R; ly = (T.ky - T.sy) / R;
-        float d = sqrtf(lx * lx + ly * ly); if (d > 1) { lx /= d; ly /= d; }
+        /* not the original's 30 % per axis (main_engine.c in_deadzone, for sticks that drift), which snaps everything
+         * within 17.5° of an axis onto it: 10 % round the centre, the rest scaled to 0..1, and an axis below a fifth of the
+         * push dropped (within 11.5°), so the menus still step one way */
+        float d = sqrtf(lx * lx + ly * ly), s = d > 1 ? 1 : d, g = s < 0.1f ? 0 : (s - 0.1f) / 0.9f / d;
+        if (fabsf(lx) < 0.2f * d) lx = 0;
+        if (fabsf(ly) < 0.2f * d) ly = 0;
+        lx *= g; ly *= g;
     }
     for (int i = T.nf; i-- > 0; ) { if (T.f[i].up) drop(i); else T.f[i].seen = 1; }
     if (!m && !lx && !ly) return;
     st->buttons |= m;
-    if (lx * lx + ly * ly > st->lx * st->lx + st->ly * st->ly) { st->lx = lx; st->ly = ly; }
+    if (lx * lx + ly * ly > st->lx * st->lx + st->ly * st->ly) { st->lx = lx; st->ly = ly; st->touch = 1; }
     if (st->kind == PADK_NONE) st->kind = PADK_XBOX;
 }
 

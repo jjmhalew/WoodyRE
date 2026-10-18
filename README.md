@@ -78,10 +78,10 @@ and so are the port's own menus (Display, Controls).
 Menus: Enter or Jump confirms, Esc or Duck goes back. Options → Controls changes the keys and pad buttons, and the camera
 speed of the right stick (25 % to 200 %; a slow camera is gentler if you get motion sick).
 
-Touch screens (Android): the left half of the screen is a stick wherever you put your thumb down (it walks, and moves
-through the menus). On the right are the four pad buttons: A (green, jump / confirm), B (red, duck / back), X (blue,
-attack) and Y (yellow, special), above them camera behind (LB) and look around (RB), and pause at the top right. The
-back button or gesture works as Esc.
+Touch screens (Android): the left half of the screen is a stick centred wherever you put your thumb down (it
+walks, and moves through the menus). On the right are the four pad buttons: A (green, jump / confirm), B (red, duck /
+back), X (blue, attack) and Y (yellow, special), above them camera behind (LB) and look around (RB), and pause at the
+top right. The back button or gesture works as Esc.
 
 Controllers: a DualSense (PS5) or DualShock 4 (PS4) works over USB or Bluetooth without extra software, and so do Xbox
 controllers and other XInput pads; all with rumble (Options, Vibration sets its strength). Any other joystick works as in

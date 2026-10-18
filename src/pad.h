@@ -17,6 +17,7 @@ typedef struct {
     uint32_t buttons;            /* 1 << PAD_*; LT / RT count as pressed from a quarter of their travel */
     float lx, ly, rx, ry;        /* the sticks, -1..1 with y down = + (as the original's joystick), no dead zone */
     float lt, rt;                /* the triggers, 0..1 */
+    int touch;                   /* lx / ly are the on-screen stick (touch.c): its dead zone is already applied, pad_deadzone= is not */
 } PadState;
 
 /* once per frame: reads every pad (input and rumble are paused while the window is not in front); devchanges = a counter
