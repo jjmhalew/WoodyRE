@@ -10,6 +10,7 @@
 #include "hud.h"
 #include "audio.h"
 #include "texpack.h"
+#include "crtrand.h"
 #include "plat.h"
 #include <GL/gl.h>
 #include <stdio.h>
@@ -89,7 +90,7 @@ static struct {
     uint8_t cage_open;              /* +0xc0760 */
     int level;                      /* +0xc0764: round 1..3 */
     float dt, timer, times[3], end_t;   /* +0xc0768, +0xc076c, +0xc0770.., +0xc077c */
-    uint8_t steps, steps_on; float step_t;   /* the footstep source Woody+0x84 (0x468e40 / 0x468e50) and the port's chain clock */
+    uint8_t steps, steps_on, step_cur; float step_t;   /* the footstep source Woody+0x84 (0x468e40 / 0x468e50), the port's chain clock and link */
 } B;
 
 /* ---------------------------------------------------------------- drawing */
@@ -243,11 +244,17 @@ static void mask_move(Spr *s, float vx, float vy, int *hit, int flag)
 /* ---------------------------------------------------------------- Woody (0x485a50) */
 #define P B.p
 static float hop(float t) { float a = t - 0.05f; return a * (140.0f - a * 140.0f) + 7.0f; }   /* 0x486b80: the rise of a jump, 7..42 px */
-static void steps_tick(void)        /* 0x468e50(src, 0, 25, fx, -1): the footstep chain 25 -> 26 -> 27 -> 28 (0.3 s apart), shuffled
-                                     * by 0x468b40 every walking frame; the port plays a random one of the four every 0.3 s */
+/* the next fields (+0x10) of SoundFx 25..28 in the static table (0x4661a0): 25 -> 26 -> 27 -> 28 -> 25 at start-up, and never
+ * reset, so the shuffles of every walking frame of every round add up for the whole process */
+static uint8_t g_step_next[4] = { 1, 2, 3, 0 };
+static void steps_shuffle(void)     /* 0x468b40(25, 4): four times swap the next fields of 25 + rand() % 4 and 25 + rand() % 4 */
 {
-    if (B.steps && !B.steps_on) { B.steps_on = 1; B.step_t = 0; audio_fx(25, NULL, NULL); }
-    else if (B.steps && B.dt > 0 && (B.step_t += B.dt) >= 0.3f) { B.step_t -= 0.3f; audio_fx(25 + rand() % 4, NULL, NULL); }
+    for (int k = 0; k < 4; k++) { int i = crt_mod(4), j = crt_mod(4); uint8_t t = g_step_next[i]; g_step_next[i] = g_step_next[j]; g_step_next[j] = t; }
+}
+static void steps_tick(void)        /* 0x468e50(src, 0, 25, fx, -1): the footstep chain from 25 on, one link every 0.3 s */
+{
+    if (B.steps && !B.steps_on) { B.steps_on = 1; B.step_t = 0; B.step_cur = 0; audio_fx(25, NULL, NULL); }
+    else if (B.steps && B.dt > 0 && (B.step_t += B.dt) >= 0.3f) { B.step_t -= 0.3f; B.step_cur = g_step_next[B.step_cur]; audio_fx(25 + B.step_cur, NULL, NULL); }
     if (!B.steps && B.steps_on) { for (int i = 25; i <= 28; i++) audio_fx_stop(i, NULL, 0); B.steps_on = 0; }
     B.steps = 0;
 }
@@ -261,10 +268,10 @@ static void hero_set_state(int st)  /* 0x4866d0 */
     case 1: spr_dur(s, 0.6f); break;
     case 2: spr_dur(s, 0.2f); break;
     case 4: audio_fx(32, NULL, NULL); spr_dur(s, 0.15f); break;            /* ducking */
-    case 5: audio_fx(21 + rand() % 4, NULL, NULL); spr_dur(s, 0.55f); break;   /* jump */
+    case 5: audio_fx(21 + crt_mod(4), NULL, NULL); spr_dur(s, 0.55f); break;   /* jump (0x48672e) */
     case 6: spr_dur(s, 15.0f); break;                                      /* falling: the frame comes from 0x486c10 */
     case 7: case 12: spr_dur(s, 1.0f); break;
-    case 9: audio_fx(34 + rand() % 3, NULL, NULL); spr_dur(s, 0.4f); break;   /* hit */
+    case 9: audio_fx(34 + crt_mod(3), NULL, NULL); spr_dur(s, 0.4f); break;   /* hit (0x486780) */
     case 10: audio_fx(33, NULL, NULL); spr_dur(s, 1.5f); break;            /* last life gone */
     case 11: spr_dur(s, 0.8f); break;                                      /* holds up the potion */
     }
@@ -297,7 +304,7 @@ static void hero_state_vel(void)    /* 0x486560 */
     Spr *s = &P.s; float k = P.dt * P.spd;
     switch (s->state) {
     case 5: s->y = s->base; if (s->t > 0.05f) s->vy = -hop(s->t); break;  /* the jump is a height over its start, not a speed */
-    case 1: B.steps = 1; s->vx = s->dir * k * 80.0f; s->vy = 0; break;
+    case 1: B.steps = 1; steps_shuffle(); s->vx = s->dir * k * 80.0f; s->vy = 0; break;   /* 0x48662f: the shuffle, every walking frame */
     case 2: s->vx = s->vy = 0; break;
     case 7: s->vx = 0; s->vy = P.climb * k * -50.0f; break;
     }
@@ -374,7 +381,7 @@ static void hero_land(int hit, float oldy)   /* 0x486860, after the falling step
     else if (P.long_fall && s->type == 0) { s->t = 0; s->frame = 0; s->base += 10.0f; return; }   /* the long pose is 10 px deeper and began this frame */
     else { if (s->type == 0) s->y += 10.0f; s->t = 14.7f; s->frame += 6; }                   /* hard landing: frames 2..4 for 0.3 s */
     s->base = 0; jump_reset(s);
-    audio_fx(29 + rand() % 3, NULL, NULL);
+    audio_fx(29 + crt_mod(3), NULL, NULL);                                  /* 0x486a09 */
 }
 static void hero_bump(void)         /* 0x486aa0: a jump that hits something falls from where it was the frame before */
 {
@@ -392,7 +399,7 @@ static void hero_lives(int level) { P.lives_max = level == 1 ? 3 : level == 2 ? 
 /* ---------------------------------------------------------------- Knothead and Splinter (0x487c90) */
 static void kid_random(Spr *s)      /* 0x4880b0 */
 {
-    switch (rand() % 4) { case 0: base_set_state(s, 1); break; case 1: base_set_state(s, 5); s->base = s->y; break;
+    switch (crt_mod(4)) {                                                 /* 0x4880b5 */ case 0: base_set_state(s, 1); break; case 1: base_set_state(s, 5); s->base = s->y; break;
                           case 2: base_set_state(s, 12); break; default: base_set_state(s, 11); break; }
 }
 static void kid_frame(Kid *k)       /* 0x487ce0 */

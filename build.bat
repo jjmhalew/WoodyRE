@@ -4,6 +4,7 @@ rem   build.bat             WoodyRE.exe, the game (start it, it asks for the CD 
 rem   build.bat dev         out\woody.exe, the developer build (console log, same engine)
 rem   build.bat standalone  WoodyRE-standalone.exe: WoodyRE.exe + YOUR game files in one exe, for your own use only
 rem   build.bat texup       build\texup.exe, the image helper of make_hd_textures.bat
+rem   build.bat apkbundle   only build\apkbundle.exe, the tool of make_android_bundle.bat
 rem The C compiler is Zig (ziglang.org): a zig on PATH or "pip install ziglang" is used when there, otherwise the official
 rem Windows build is downloaded once into tools\zig and checked against its SHA-256.
 setlocal
@@ -12,7 +13,7 @@ cd /d "%~dp0"
 set "ZIG_VER=0.16.0"
 set "ZIG_SHA=68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e"
 set "ZIG_NAME=zig-x86_64-windows-%ZIG_VER%"
-set "SRC=src\level.c src\render_gl.c src\main_engine.c src\player.c src\instance.c src\enemy.c src\boss.c src\water.c src\storm.c src\ekovm.c src\audio.c src\hud.c src\hnm.c src\ambient.c src\blackbox.c src\datasetup.c src\pad.c src\texpack.c"
+set "SRC=src\level.c src\render_gl.c src\main_engine.c src\player.c src\instance.c src\enemy.c src\boss.c src\water.c src\storm.c src\ekovm.c src\audio.c src\hud.c src\hnm.c src\ambient.c src\blackbox.c src\datasetup.c src\pad.c src\texpack.c src\gtao.c src\postfx.c"
 set "LIBS=-lopengl32 -lgdi32 -luser32 -lwinmm -lbcrypt -lshell32 -lole32 -lhid -lsetupapi"
 rem zig cc compiles for the CPU of the build machine unless told otherwise: an exe built on a new PC or on the CI runner
 rem then uses AVX2/AVX-512 and dies with "illegal instruction" (0xc000001d) on older CPUs. Plain x86-64 runs everywhere.
@@ -20,6 +21,11 @@ set "CPU=-target x86_64-windows-gnu -mcpu=baseline"
 
 call :find_zig || goto :fail
 
+if /i "%~1"=="apkbundle" (
+    if not exist build mkdir build
+    %ZIG% cc -std=c99 -O2 %CPU% -o build\apkbundle.exe tools\native\apkbundle.c -lbcrypt -lshell32 || goto :fail
+    exit /b 0
+)
 if /i "%~1"=="dev" (
     if not exist out mkdir out
     echo Building out\woody.exe ^(developer build^)...

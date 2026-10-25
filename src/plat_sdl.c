@@ -1,5 +1,6 @@
 /* plat_sdl.c - the window, keyboard, mouse and OS bits of render_gl.h / plat.h on SDL2, for the builds outside Windows
- * (Linux, Steam Deck: build.sh; Android: android/, on OpenGL ES 2.0 / 3.0 through src/gles). The Windows build keeps its own
+ * (Linux, Steam Deck: build.sh; Android: android/ and the Switch: build_switch.sh, both on OpenGL ES 2.0 / 3.0 through
+ * src/gles). The Windows build keeps its own
  * Win32 + WGL window in render_gl.c. Keys arrive as SDL
  * scancodes and are stored as the Windows virtual-key codes the rest of the engine uses: letters by the layout (as VK
  * letters are on Windows), everything else by position; Ctrl / Shift / Alt set both their side and the plain code. */
@@ -20,7 +21,16 @@
 /* ---- files ----------------------------------------------------------------------------------------------------------- */
 int plat_exists(const char *path) { struct stat st; return stat(path, &st) == 0; }
 
-/* path with every part matched ignoring case against what is on disk; 0 = some part is not there */
+/* a name on disk that stands for want: equal ignoring case, or with one dot more at the end - an ISO 9660 name without an
+ * extension is stored as "CODE.;1", and some tools that unpack the image keep that dot (Windows drops it, so the engine asks
+ * for Data/House/code) */
+static int name_is(const char *disk, const char *want)
+{
+    size_t n = strlen(disk), w = strlen(want);
+    return !strcasecmp(disk, want) || (n == w + 1 && disk[w] == '.' && !strncasecmp(disk, want, w));
+}
+
+/* path with every part matched ignoring case (and an ISO trailing dot) against what is on disk; 0 = some part is not there */
 static int resolve(const char *in, char *out, size_t cap)
 {
     char buf[1024]; size_t n = strlen(in); if (n >= sizeof buf || n + 1 > cap) return 0;
@@ -34,7 +44,7 @@ static int resolve(const char *in, char *out, size_t cap)
         if (!strcmp(p, ".") || !strcmp(p, "..") || plat_exists(test)) { o += (size_t)snprintf(out + o, cap - o, "%s", p); }
         else {
             DIR *d = opendir(o ? out : "."); struct dirent *de; int found = 0;
-            if (d) { while ((de = readdir(d))) if (!strcasecmp(de->d_name, p)) { o += (size_t)snprintf(out + o, cap - o, "%s", de->d_name); found = 1; break; } closedir(d); }
+            if (d) { while ((de = readdir(d))) if (name_is(de->d_name, p)) { o += (size_t)snprintf(out + o, cap - o, "%s", de->d_name); found = 1; break; } closedir(d); }
             if (!found) return 0;
         }
         if (o >= cap - 1) return 0;
@@ -62,7 +72,7 @@ int plat_vsc_to_vk(int sc)            /* MapVirtualKey(sc, MAPVK_VSC_TO_VK) of a
         VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD0, VK_DECIMAL, 0, 0, VK_OEM_102, VK_F11, VK_F12 };
     return sc > 0 && sc < 0x59 ? T[sc] : 0;
 }
-#ifdef __ANDROID__
+#ifdef WOODY_GLES                                                   /* the shim of src/gles (Android, Switch) */
 void (*plat_gl_proc(const char *name))(void) { return gles_proc(name); }   /* eglGetProcAddress may hand out stubs for any name */
 #else
 void (*plat_gl_proc(const char *name))(void) { return (void (*)(void))SDL_GL_GetProcAddress(name); }
@@ -87,6 +97,14 @@ int plat_dialog(const char *text, const char *b1, const char *b2, const char *b3
     return r;
 }
 void plat_message(const char *text, int warn) { (void)warn; printf("%s\n", text); plat_dialog(text, "OK", NULL, NULL); }
+#elif defined __SWITCH__
+#include <switch/applets/error.h>                              /* not all of switch.h: its PadState is not pad.h's */
+/* SDL has no message box on the Switch: the system's error dialog shows the text with one button */
+void plat_message(const char *text, int warn)
+{
+    (void)warn; printf("%s\n", text); fflush(stdout);
+    ErrorApplicationConfig c; errorApplicationCreate(&c, text, NULL); errorApplicationShow(&c);
+}
 #else
 void plat_message(const char *text, int warn)
 {
@@ -101,8 +119,9 @@ void plat_message(const char *text, int warn)
 static int g_logfd = -1, g_logpipe[2];
 static void *log_pump(void *arg)
 {
-    (void)arg; char b[1024]; size_t n = 0; ssize_t k;
+    (void)arg; char b[1024]; size_t n = 0; ssize_t k; long long put = 0;
     while ((k = read(g_logpipe[0], b + n, sizeof b - 1 - n)) > 0) {
+        if (g_logfd >= 0 && (put += k) > (32LL << 20)) { (void)!ftruncate(g_logfd, 0); lseek(g_logfd, 0, SEEK_SET); put = k; }   /* woodyre.log starts again past 32 MB, as main_engine.c */
         if (g_logfd >= 0) (void)!write(g_logfd, b + n, (size_t)k);
         n += (size_t)k; b[n] = 0;
         char *s = b, *e;
@@ -174,9 +193,11 @@ int win_open(Window *w, const char *title, int width, int height)
     SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
     flags |= SDL_WINDOW_FULLSCREEN;
     log_tee();
+#elif defined __SWITCH__
+    flags |= SDL_WINDOW_FULLSCREEN; width = 1280; height = 720;        /* the whole screen; SDL follows docked / handheld */
 #endif
     if (SDL_InitSubSystem(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return -1; }
-#ifdef __ANDROID__
+#ifdef WOODY_GLES
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
@@ -237,7 +258,7 @@ void win_swap(Window *w)
 void win_mode(Window *w, int width, int height, int full)
 {
     SDL_Window *sw = (SDL_Window *)w->hwnd;
-#ifdef __ANDROID__
+#if defined __ANDROID__ || defined __SWITCH__
     (void)width; (void)height; (void)full; (void)sw; drawable(w); return;   /* always the whole screen */
 #endif
     if (full) { SDL_SetWindowFullscreen(sw, SDL_WINDOW_FULLSCREEN_DESKTOP); drawable(w); return; }

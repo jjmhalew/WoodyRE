@@ -8,6 +8,7 @@
 #include "enemy.h"
 #include "instance.h"
 #include "pad.h"
+#include "crtrand.h"
 
 /* Rumble 0x44d1b0(a, b): [0x5e618c]->vt[2](a, b), skipped in Perso state 2 (dead). The original's joystick method is an empty
  * `ret 8` (docs/MENU_OPTIONS.md 5.2); the port gives it to the pads of src/pad.c (PORT EXTRA): a = strength, b = seconds (the
@@ -933,7 +934,7 @@ static int idle_anim(Player *p, float dt)
     int first = p->idle_t <= 10.0f;
     p->idle_t += dt;
     if (p->idle_t <= 10.0f) return 0;
-    if (first) p->idle_var = rand() % 7 == 0;
+    if (first) p->idle_var = crt_range(0, 7) == 0;                               /* 0x464545 */
     int want = p->idle_var ? 0x5a : 0x59;
     if (p->idle_var && anim_len(p, 0x5a, 0) * 2.0f + 10.0f <= p->idle_t) idle_reset(p);
     if (p->inst->anim == 0x57 && p->idle_t > 10.5f && !p->sleep_bubble) { p->sleep_bubble = 1; game_bubble(p->inst, 4, 2.5f, 130.0f, 50.0f, &p->sleep_bubble); }
@@ -1101,7 +1102,7 @@ static void attack_update(Player *p, const PlayerInput *in, float dt)
             p->aim = t->pos; p->aim.y += enemy_height(t) * 0.8f; p->target = t;
             if (p->pos.y - p->aim.y > 50.0f) { p->atk_dir = vsub(p->aim, p->pos); p->has_target = 1; enemy_warn_dive(t, p->atk_dir);   /* 0x457f90 -> vtbl[37] */ float yl = sqrtf(p->atk_dir.x * p->atk_dir.x + p->atk_dir.z * p->atk_dir.z); if (yl > 0.01f) p->yaw = atan2f(p->atk_dir.x, p->atk_dir.z); }
         }
-        p->dash_start = p->pos; audio_fx(55 + rand() % 3, NULL, NULL);          /* 0x45752b: air attack cry, 0x37 + rand(0,3) */
+        p->dash_start = p->pos; audio_fx(55 + crt_range(0, 3), NULL, NULL);      /* 0x457516 / 0x45752b: air attack cry, 0x37 + rand(0,3) */
         { float l = sqrtf(vdot(p->atk_dir, p->atk_dir)); p->atk_dir.x /= l; p->atk_dir.y /= l; p->atk_dir.z /= l; }
         p->jumper.fallen = 0; p->jumper.hard_fall = 0; p->air_win = 0; p->am_win = 0; p->atk = 2; return; }   /* 0x457560(0, 1), 0x465e00(0, 1) */
     case 2:
@@ -1263,6 +1264,13 @@ void player_kill(Player *p, int kind)                                   /* vt[38
         return;
     }
     if (kind == 2 || kind == 9) rumble(p, 0.5f, 1.5f);                  /* 0x44c3ab: Perso +0x1e4, +0x1e0 = P+0xd4, P+0xd0, before the immunity tests */
+    if ((kind == 2 || kind == 6 || kind == 9) && game_soft_hazards() && !p->dead_kind) {   /* PORT EXTRA: a laser, lightning or blast costs a heart */
+        if (p->invuln_respawn > 0 || p->soft_t > 0) return;
+        p->soft_t = 1.0f; p->invuln_hit = 0;                             /* the blasts' own 0-damage Hit just before must not refuse this one */
+        if (kind == 6) { p->ride = NULL; bomb_drop(p); }                 /* as the Kill: off the rocket, the bomb in his hands went off */
+        if (!player_hit(p, 1.0f, (Vec3){ 0, 0, 0 })) return;
+        kind = 3;                                                        /* the last heart: the ordinary death */
+    }
     if (p->dead_kind) { if (!((kind == 7 && p->dead_kind != 7) || (kind == 1 && p->dead_kind != 1))) return; }
     if ((kind == 2 || kind == 9 || kind == 3 || kind == 8 || kind == 4 || kind == 5 || kind == 6) && p->invuln_respawn > 0) return;
     p->death_delay = 3.5f;                                              /* +0x288: time until the fade */
@@ -2220,6 +2228,7 @@ void player_update(Player *p, const PlayerInput *in, float dt, EkoVM *vm, float 
     if (p->move_lock > 0) p->move_lock -= dt;
     if (p->invuln_respawn > 0) p->invuln_respawn -= dt;
     if (p->invuln_hit > 0) p->invuln_hit -= dt;
+    if (p->soft_t > 0) p->soft_t -= dt;
     if (p->bonus_inv > 0) p->bonus_inv -= dt;                             /* 0x44b1fa */
     bonus_blink(p, dt);
     if (p->game_state == 0) return;                                      /* waiting for the respawn */

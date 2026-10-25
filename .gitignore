@@ -6,6 +6,7 @@ game/
 # build output
 /WoodyRE.exe
 /WoodyRE-standalone.exe
+/*.apk
 *.pdb
 build/
 tools/zig/
@@ -24,3 +25,4 @@ __pycache__/
 *.pyc
 .venv/
 /woodyre
+/woodyre.nro

@@ -45,6 +45,15 @@ copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` there with a USB cable. `wo
 and `mods/` live in `Android/data/io.github.jjmhalew.woodyre/files`. A Bluetooth or USB pad works like on Linux and hides
 the touch controls; touching the screen brings them back.
 
+**Nintendo Switch** (experimental; needs a Switch that runs homebrew, i.e. custom firmware such as Atmosphère): put
+`woodyre.nro` from the Releases page (or `./build_switch.sh`) into `/switch/woodyre/` on the SD card. Put an ISO image of
+the CD in the same folder: the first start unpacks it into `/switch/woodyre/data` (a few minutes, once), then asks you to
+press + and start WoodyRE again; the ISO can be deleted then. Or copy `Data`, `Common`, `Logo`, `Game` and `Music.bf` from the CD into `/switch/woodyre/data` yourself.
+Start it from the Homebrew Menu, preferably by holding R while starting a game (title takeover; the Album applet has
+less memory). `woodyre.cfg`, `woodyre.sav`, `woodyre.log` and `mods/` live in `/switch/woodyre`. The buttons follow
+their labels: A jumps and confirms, B ducks and goes back, X attacks, Y is the special attack, ZR / ZL as RT / LT. Joy-Cons
+(attached or held as a pair) and the Pro Controller work.
+
 **Supported versions:** the English PC CD-ROM, version 1.00 (October 2001), the Spanish CD (same game data as 1.00), and
 three CDs with the February 2002 data (a few level fixes): the Brazilian Portuguese "Pica-Pau: A Fuga do Parque do Zeca
 Urubu!", the Polish "Wielka Draka w Parku Buzza Buzzarda" and the Russian release by 1C. The game is in the CD's language,
@@ -69,10 +78,10 @@ and so are the port's own menus (Display, Controls).
 Menus: Enter or Jump confirms, Esc or Duck goes back. Options → Controls changes the keys and pad buttons, and the camera
 speed of the right stick (25 % to 200 %; a slow camera is gentler if you get motion sick).
 
-Touch screens (Android): the left half of the screen is a stick wherever you put your thumb down (it walks, and moves
-through the menus). On the right are the four pad buttons: A (green, jump / confirm), B (red, duck / back), X (blue,
-attack) and Y (yellow, special), above them camera behind (LB) and look around (RB), and pause at the top right. The
-back button or gesture works as Esc.
+Touch screens (Android): the left half of the screen is a stick centred wherever you put your thumb down (it
+walks, and moves through the menus). On the right are the four pad buttons: A (green, jump / confirm), B (red, duck /
+back), X (blue, attack) and Y (yellow, special), above them camera behind (LB) and look around (RB), and pause at the
+top right. The back button or gesture works as Esc.
 
 Controllers: a DualSense (PS5) or DualShock 4 (PS4) works over USB or Bluetooth without extra software, and so do Xbox
 controllers and other XInput pads; all with rumble (Options, Vibration sets its strength). Any other joystick works as in
@@ -81,11 +90,16 @@ the original (WinMM). On Linux every pad SDL2 knows works, the Steam Deck's own 
 ### Settings and files
 Everything the game writes stays next to `WoodyRE.exe` (or in `%LOCALAPPDATA%\WoodyRE` when that folder is read-only, such
 as `Program Files`, or a temporary one, such as when the exe is started from inside the zip):
-- `woodyre.cfg`: the options (sound volumes, rumble strength and the Display page: resolution, window or fullscreen, 4:3
-  or wide, vsync, frame cap, `logos=0` to skip the intro films, `pad_deadzone=30` for the stick dead zone in percent).
+- `woodyre.cfg`: the options (sound volumes, rumble strength, the Display page: resolution, window or fullscreen, 4:3
+  or wide, vsync, frame cap; the Graphics page: ambient occlusion, texture sharpness, edge smoothing (SMAA) and
+  multisampling (MSAA), all off by default; the Gameplay page: skip cutscenes with Esc / Enter / Space (pad Start / A), lasers and blasts
+  costing a heart instead of a life, a delay before an enemy's first attack, and the lives a slot gets after a game over,
+  all set to the original game by default (docs/GAMEPLAY.md); `logos=0` to skip the intro films, `pad_deadzone=30` for the stick dead zone
+  in percent).
 - `woodyre.sav`: the four save slots, in the original `Woody.sav` layout. An original `Woody.sav` placed next to the exe
   is imported once.
-- `woodyre.log`: the engine log, useful in bug reports.
+- `woodyre.log`: the engine log, useful in bug reports. It starts again past 32 MB; `WOODY_TRACE=1` adds the per-message
+  script trace (large).
 
 Command line: `WoodyRE.exe [--windowed | --fullscreen] [--res WxH] [--aspect 4:3|wide] [--nologo] [--verify] [--dumptex [all]]`.
 
@@ -112,23 +126,35 @@ or `pip install ziglang` is used when present, otherwise `build.bat` downloads t
 
 - Linux: `./build.sh` builds `woodyre` with the system's C compiler and SDL2 (Debian / Ubuntu:
   `sudo apt install build-essential libsdl2-dev`). The engine is the same; only the window, input, sound, pads
-  (`src/plat_sdl.c`, `src/pad_sdl.c`) and the first-start copy (`src/datasetup_posix.c`) are SDL / POSIX code.
+  (`src/plat_sdl.c`, `src/pad_sdl.c`) and the first-start copy (`src/datasetup_posix.c`) are SDL / POSIX code. `GLES=1 ./build.sh`
+  draws through OpenGL ES like the Android and Switch builds (`src/gles/`), to test that path on a PC.
 - Android: `cd android` then `gradlew assembleRelease` (or `assembleDebug`) builds the APK in
   `android/app/build/outputs/apk/`. It needs the Android SDK with NDK 27.2 and CMake 3.22 (Android Studio's SDK Manager
   installs both; Android Studio can also open the `android` folder directly). The build downloads SDL 2.32.10 and checks
   its SHA-256. The engine is the same as on Linux; OpenGL ES stands in for desktop OpenGL through `src/gles/`, the touch
   controls are `src/touch.c`. Without your own signing key (`-PwoodyKeystore=... -PwoodyKeyAlias=... -PwoodyKeyPassword=...`)
   the release APK is signed with the debug key, which is fine for installing it yourself.
+- Nintendo Switch: `./build_switch.sh` builds `woodyre.nro` with devkitPro's devkitA64, libnx, switch-sdl2 and
+  switch-mesa. Without `$DEVKITPRO` set it builds in the official `devkitpro/devkita64` Docker image instead. The same SDL
+  code as on Linux and Android, on OpenGL ES through `src/gles/`; the `__SWITCH__` parts are the data folder on the SD
+  card (`src/datasetup_posix.c`) and the system's error dialog for messages (`src/plat_sdl.c`).
 - `build.bat dev`: the developer build `out\woody.exe`, which logs to the console and keeps the developer keys
   (F1-F5, Tab, `[ ]`, P, PgUp/PgDn, End; in `WoodyRE.exe` they need `WOODY_DEBUGKEYS=1`).
 - `make_standalone.bat`: packs `WoodyRE.exe` and **your** game files from `data\` into a single
   `WoodyRE-standalone.exe` that unpacks itself to `%LOCALAPPDATA%\WoodyRE`. It contains the game's data, so it is
   for your own use only: never share or upload it.
+- `make_android_bundle.bat`: the same for Android: the APK of a release (or of your own build) and **your** ISO image of
+  the CD in a single `WoodyRE-bundle.apk`, which unpacks the image at its first start without asking for it. Drag both
+  files onto the .bat, or put them next to it. It is signed with a key of your own (made once, in
+  `%LOCALAPPDATA%\WoodyRE\android-bundle.key`), so it does not install over a WoodyRE from the Releases page: uninstall
+  that first. Also for your own devices only.
 
 ## License
 The code in this repository is licensed under the [GNU General Public License v3.0](LICENSE) or later. This does not
 cover the original game, its data or its trademarks, which belong to their owners and are not part of this project.
-`src/stb/` holds Sean Barrett's stb_image and stb_image_write (public domain or MIT, see the end of each file). `android/app/src/main/java/org/libsdl/` is SDL's Android code (SDL 2.32.10, zlib license); the
+`src/stb/` holds Sean Barrett's stb_image and stb_image_write (public domain or MIT, see the end of each file).
+`src/smaa/smaa.h` is SMAA by Jorge Jimenez et al. (MIT, the licence is at its top), made from github.com/iryoku/smaa by
+`tools/smaa_embed.py`. `android/app/src/main/java/org/libsdl/` is SDL's Android code (SDL 2.32.10, zlib license); the
 Android build downloads SDL itself.
 
 # Development and reverse engineering
@@ -152,6 +178,8 @@ git, as are `data/` and the scratch folder `out/`. The original's internals are 
 pip install pefile capstone ziglang pillow
 python -m ziglang cc -std=c99 -O2 -o out/ekorun.exe src/ekovm.c src/ekorun.c
 ./out/ekorun.exe extract/Data/W1A/code 60          # init + 60 ticks, print SEND trace
+python -m ziglang cc -std=c99 -O2 -o out/randtest.exe src/ekovm.c src/randtest.c
+./out/randtest.exe                                 # the game's rand() stream = MSVC rand() of Woody.exe (docs/RANDOM.md)
 python tools/ekodisasm.py extract/Data out/ekoasm   # disassemble all levels
 python tools/ekovm.py extract/Data                  # message statistics for all levels
 ```
@@ -184,7 +212,7 @@ build.bat dev                                    # out/woody.exe (the source lis
 ./out/woody.exe extract/Data                     # without a level: the three logo films (each press of Esc / Enter / Space skips one; --nologo, or logos=0 in woodyre.cfg, plays none), then the title screen (House, level 0); Enter starts, then the hub
 ./out/woody.exe extract/Data W1A                 # arrow keys/WASD walk (relative to camera), space jumps, Enter (or V) looks around (release toggles; arrows turn the view; the mouse only with WOODY_LOOKMOUSE=1, the original never polls it; docs/PERSO_LOOK.md), F5 free camera (then WASD + right mouse button), [ ] animation, Tab instance, F1-F4 toggles (F4 = culling)
 ./out/woody.exe extract/Data W1A --shot out/s.ppm 3   # screenshot after 3 s and stop
-./out/woody.exe extract/Data W1A --res 1920x1080 --aspect 4:3   # display (port extras, docs/DISPLAY.md): --res WxH, --windowed / --fullscreen, --aspect 4:3|wide; WOODY_VSYNC=0/1, WOODY_FPSCAP=N; F11 = fullscreen; Options > Display saves them in woodyre.cfg (which also has reverse_stereo= / film_sound=, docs/SETUP.md; WOODY_REVSTEREO=0/1)
+./out/woody.exe extract/Data W1A --res 1920x1080 --aspect 4:3   # display (port extras, docs/DISPLAY.md): --res WxH, --windowed / --fullscreen, --aspect 4:3|wide; WOODY_VSYNC=0/1, WOODY_FPSCAP=N; Graphics page: WOODY_AO=0/1, WOODY_ANISO=N, WOODY_SMAA=0..4, WOODY_MSAA=0/2/4/8; F11 = fullscreen; Options > Display saves them in woodyre.cfg (which also has reverse_stereo= / film_sound=, docs/SETUP.md; WOODY_REVSTEREO=0/1)
 ./out/woody.exe extract/Data WWS --prev W1A --stats 12 12 25 20 245   # results screen: back from W1A with these stats
 ./out/woody.exe extract/Data W1A --cam 537 -1800 -2450 0 -10   # camera: x y z yaw pitch (degrees)
 python -m ziglang cc -std=c99 -O2 -o out/leveltest.exe src/level.c src/leveltest.c && ./out/leveltest.exe extract/Data   # parser test, 28 levels

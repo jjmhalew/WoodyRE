@@ -110,7 +110,6 @@ struct EkoVM {
     EkoMsgCallback on_msg; EkoWarnCallback on_warn; void *user;
     int discard_msgs;                  /* set during the first init pass: the exe throws those messages away */
     int defer_msgs;                    /* set during the whole init: the exe only hands the queue (0x5bd300) to the game AFTER the tick */
-    uint32_t (*rand_fn)(void *user);
 };
 
 /* lifecycle */

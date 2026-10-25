@@ -13,6 +13,7 @@
 #include "render_gl.h"
 #include "player.h"                                   /* volume_contains (0x4300c0) */
 #include "texpack.h"
+#include "gtao.h"
 
 #ifdef _WIN32
 static Window *g_win;
@@ -171,6 +172,22 @@ static void tex16_widen(const uint16_t *s, uint8_t *d, uint32_t n, int ck)  /* t
         d[0] = (uint8_t)(r5 << 3 | r5 >> 2); d[1] = (uint8_t)g; d[2] = (uint8_t)(b5 << 3 | b5 >> 2);
     }
 }
+/* texture sharpness (PORT EXTRA, docs/DISPLAY.md 5): anisotropic filtering (GL_EXT_texture_filter_anisotropic) on the level
+ * textures, over the original's filters; 1 = off, the original. rnd_frame applies a change to the loaded textures. */
+#define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY 0x84FF
+static int g_aniso = 1, g_aniso_max = -1, g_aniso_dirty;
+int rnd_aniso_max(void)
+{
+    if (g_aniso_max < 0) {
+        const char *e = (const char *)glGetString(GL_EXTENSIONS); GLfloat m = 0;
+        if (e && (strstr(e, "GL_EXT_texture_filter_anisotropic") || strstr(e, "GL_ARB_texture_filter_anisotropic"))) glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &m);
+        g_aniso_max = m >= 16 ? 16 : m >= 8 ? 8 : m >= 4 ? 4 : m >= 2 ? 2 : 0;
+    }
+    return g_aniso_max;
+}
+void rnd_set_aniso(int n) { if (n < 1) n = 1; if (n != g_aniso) { g_aniso = n; g_aniso_dirty = 1; } }
+static void tex_aniso(void) { int m = rnd_aniso_max(); if (m >= 2) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, (GLfloat)(g_aniso < m ? g_aniso : m)); }
 static GLuint upload_texture(const TexGroup *g, int frame)
 {
     GLuint id; glGenTextures(1, &id); glBindTexture(GL_TEXTURE_2D, id);
@@ -178,7 +195,7 @@ static GLuint upload_texture(const TexGroup *g, int frame)
     uint64_t hash = tp_hash('T', g->frames[frame], n * 2, w, h);
     if (tp_replace(hash, ck ? TP_KEY : TP_OPAQUE)) {                         /* port extra: a texture pack's PNG (texpack.c) */
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        return id;
+        tex_aniso(); return id;
     }
     uint16_t *s = (uint16_t *)malloc((size_t)n * 2 + 2), *half = (uint16_t *)malloc((size_t)n * 2 + 2); uint8_t *rgba = (uint8_t *)malloc((size_t)n * 4 + 4);
     for (uint32_t i = 0; i < n; i++) s[i] = tex16_texel(g->frames[frame][i], ck);
@@ -196,6 +213,7 @@ static GLuint upload_texture(const TexGroup *g, int frame)
     glTexParameteri(GL_TEXTURE_2D, 0x813D /* GL_TEXTURE_MAX_LEVEL (1.2) */, level < 3 ? level : 3);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    tex_aniso();
     free(s); free(half); free(rgba); return id;
 }
 
@@ -973,10 +991,14 @@ static void chain_unlink(Renderer *r, Instance *in)
     in->cell_next = NULL; in->chain_sec1 = 0;
 }
 /* the cell point of a clock run or an actor's own re-cell: an enemy's collision centre (0x4077f0 in its mover), a flag-0x20
- * link its .ins position (the last explicit 0x4077f0(NULL)), everything else the animated root inst+0x60 (the clock 0x43f2f1) */
+ * link its .ins position (the last explicit 0x4077f0(NULL)), everything else the animated root inst+0x60 (the clock 0x43f2f1).
+ * An enemy whose mover has not run yet (the bosses 13..16: no ground snap at PostLoad) is still in the cell the loader gave
+ * it, its .ins position: the clock never re-cells flag 0x20. On its animated root the WWS Buzz (362, anim 0 = cinematic
+ * track, root 2435 853 -4846) had no floor group, was never listed, never thought, so never took the script's start (var 138) */
 static Vec3 cell_point(const Instance *in)
 {
-    return in->cell_dy > 0 ? (Vec3){ in->position.x, in->position.y + in->cell_dy, in->position.z } : in->cell_fixed ? in->position : ins_anim_centre(in);
+    return in->cell_dy > 0 ? (Vec3){ in->position.x, in->position.y + in->cell_dy, in->position.z }
+         : in->cell_fixed || (in->type >= 4 && in->type <= 16) ? in->position : ins_anim_centre(in);
 }
 /* +8 & 0x20 (level.c ins_flag20): the actors move and re-cell themselves (the Perso, enemies and bosses, the race board, the
  * rocket, the bomb cannon, the bombs), the links of messages 61/62 are never re-celled by their clock */
@@ -2041,6 +2063,12 @@ void rnd_frame(Renderer *r, const Window *w, const FreeCamera *cam, float time_s
 {
     glViewport(w->vx, w->vy, w->width, w->height);
     g_tex_now = time_s; g_cam_pos = cam->pos;
+    if (g_aniso_dirty) {                                             /* the texture sharpness changed: every loaded texture */
+        g_aniso_dirty = 0;
+        for (uint32_t g = 0; g < r->tex->ngroups; g++) { const TexGroup *tg = &r->tex->groups[g]; if (!tg->gl_frames) continue;
+            for (uint32_t k = 0; k < tg->frame_count; k++) if (tg->gl_frames[k]) { glBindTexture(GL_TEXTURE_2D, tg->gl_frames[k]); tex_aniso(); } }
+        glBindTexture(GL_TEXTURE_2D, 0); g_last_material = 0xffffffffu;
+    }
     for (uint32_t g = 0; g < r->tex->ngroups; g++) {                 /* texture animation: frame_count frames over anim_duration seconds */
         TexGroup *tg = &r->tex->groups[g];
         if (tg->frame_count > 1 && tg->anim_duration > 0 && ((tg->flags >> 8) & 0xff) != 2) tg->gl_tex = tg->gl_frames[(uint32_t)(time_s / tg->anim_duration * tg->frame_count) % tg->frame_count];
@@ -2162,6 +2190,7 @@ void rnd_frame(Renderer *r, const Window *w, const FreeCamera *cam, float time_s
         bt_flush(); g_last_material = 0xffffffffu;
         T[3] += win_time() - a;
     }
+    if (pass == 0 && !r->wireframe) gtao_frame(zn, zf, f / aspect, f);   /* port extra (gtao.c): over the opaque image only, when the option is on */
     }
     if (r->show_instances && r->post_models) { r->post_models(r->tex, cam->pos); set_blend(0); g_last_material = 0xffffffffu; }
     if (r->show_instances) {

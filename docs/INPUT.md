@@ -314,6 +314,12 @@ the Mover).
   `camera_step`, so the sweep and the line-of-sight veto of CAMERA.md still stop it at walls; not in behind mode (climbing,
   rides, races, the behind key). Test hook `WOODY_RSTICK="T:RX:RY[:D] ..."`. While a pad is connected the
   WinMM joystick is not used (it would be the same pad again; Sony devices, `wMid` 0x054c, are skipped anyway).
+- **On-screen pad (PORT EXTRA, `src/touch.c`, Android)**: the left half of the screen is a stick whose base is where the thumb
+  went down and stays there (radius 0.14 of the short side; the knob stops at the rim). It does not go through `0x467a80`
+  (`PadState.touch`): 10 % round the centre is dead, the rest is scaled to 0..1, and an axis below a fifth of the push is
+  dropped, so directions snap to an axis within 11.5° only (the original's 30 % per axis snaps within 17.5° and walks
+  slower on diagonals). Up to 1.0.10 the base followed a thumb that went past the rim, so the centre wandered away from
+  where the thumb went down (issue #3).
 - **Rumble (PORT EXTRA)**: the original's calls of `0x44d1b0(a, b)` (a = strength, b = seconds; the empty `0x467b20` never
   used them) now reach the pads, scaled by the Vibration option (MENU_OPTIONS.md 5.2): hit (0.5, 0.5), lightning / laser
   (0.5, 1.5), bomb or rocket blast (1.0, 0.5), fall damage (0.8, 0.5), attack hit (0.5, 0.3), wall / ground rebound

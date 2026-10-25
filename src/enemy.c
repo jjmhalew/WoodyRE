@@ -10,6 +10,7 @@
 #include "enemy.h"
 #include "player.h"
 #include "audio.h"
+#include "crtrand.h"
 
 static void sac_init(Enemy *e);
 static void sac_reset(Enemy *e);
@@ -74,10 +75,11 @@ void enemies_add(EnemySet *s, Instance *inst, int type, struct Player *pl)
                                                                                  * runs the AnimCtrl, so an enemy that never thinks keeps this pose: S1A's type 4 (message
                                                                                  * 11 [37, 10] = activation distance 10) stand frozen; the .ins default looped anim 0 */
     if (type >= 7 && type <= 9) sac_init(e);
-    e->st = inst->traj.npoints > 1 ? 0 : (type >= 7 && type <= 9 ? 3 : 8); e->hand = rand() & 1;
+    e->st = inst->traj.npoints > 1 ? 0 : (type >= 7 && type <= 9 ? 3 : 8);
     e->behav = 2;                                                                /* Stand: the thrower (PostLoad 0x410f80 makes only that one), bosses 15 / 16 */
     if (e->st == 0) { Vec3 a = inst->traj.points[0], b = inst->traj.points[1]; e->ang = atan2f(b.z - a.z, b.x - a.x); e->behav = 3; }
     else if (type >= 4 && type <= 13 && type != 12) { wander_restart(e, -1); e->behav = 0; }   /* Reset: behaviour Wander, vtbl[6]() */
+    if (type == 13) e->hand = crt_rand() & 1;                                    /* ghost Reset 0x413a77, after its behaviour restart (0x413a1f) */
     if (type == 12) { e->st = 0; e->nlong = 4; e->idle_a = 9; e->idle_t = 0; game_msgmask(inst, 0x10, 0); if (wenv("WOODY_BOSSHP")) e->hp = (float)atof(wenv("WOODY_BOSSHP"));   /* testing */ Vec3 f = mat4_apply(&inst->world, (Vec3){ 0, -1, 0 }); e->ang = atan2f(f.z - inst->position.z, f.x - inst->position.x); }   /* Reset 0x411020: Stilstaan, timers 0, idle 9, state 0 (it clears msgmask 0x10); he keeps his .ins facing */
     inst->scripted = 0;
     if (type == 14) boss_init(e);
@@ -199,7 +201,7 @@ float enemy_sensor_nearest_free(const Enemy *e, float ang)                  /* 0
 float enemy_sensor_random_free(const Enemy *e)                              /* 0x41d2c0 */
 {
     int l[16], n = 0; for (int i = 0; i < 16; i++) if (e->sens.free[i]) l[n++] = i;
-    return n ? e->sens.ang[l[rand() % n]] : -1.0f;
+    return n ? e->sens.ang[l[crt_mod(n)]] : -1.0f;                             /* 0x41d2ea: no draw when nothing is free */
 }
 float enemy_sensor_widest_free(const Enemy *e)                              /* 0x41d390: walk both ways from each free one until either side is blocked */
 {
@@ -312,10 +314,10 @@ static void wander_choose(Enemy *e, int a)                                      
         unsigned idle = 0, walk = 0, tot; int lo, hi;
         for (int i = 0; i < 8; i++) { if (i <= 5) idle += e->w_weight[i]; else walk += e->w_weight[i]; }
         if (e->w_act > 5) { tot = idle; lo = 0; hi = 4; } else { tot = walk; lo = 6; hi = 7; }   /* after walking an idle (action 5's weight falls to 4), else a walk */
-        unsigned r = tot ? (unsigned)rand() % tot : 0, acc = 0;                  /* (the original divides by zero when all weights are 0) */
+        unsigned r = crt_rand(), acc = 0; r = tot ? r % tot : 0;                 /* 0x41c1dc, always drawn (the original divides by zero when all weights are 0) */
         a = lo; while (a < hi && r - acc >= e->w_weight[a]) { acc += e->w_weight[a]; a++; }
     }
-    if (a == 5 || a == 7) { float f = enemy_sensor_random_free(e); e->want_ang = f >= 0 ? f : (float)(rand() % 6283) * 0.001f; }   /* 0x41d2c0, else 0x41ba10 */
+    if (a == 5 || a == 7) { float f = enemy_sensor_random_free(e); e->want_ang = f >= 0 ? f : (float)crt_mod(6283) * 0.001f; }   /* 0x41d2c0, else 0x41ba10 */
     else e->want_ang = e->ang;                                                   /* 0x41b9f0(H.angle, snap): stop turning */
     wander_set(e, a);
 }
@@ -434,7 +436,7 @@ int enemy_common_move(Enemy *e, struct Player *pl, Vec3 delta, float *knock_t, V
     if (behav == 1) {                                                           /* Chase hook 0x41bdf0 */
         float mx = res.x - from.x, my = res.y - from.y, mz = res.z - from.z;
         if (sqrtf(mx * mx + my * my + mz * mz) < 0.01f && step > 0) {          /* the ±16 goes onto the hook's copy of FROM (0x41be56 / 0x41be74), */
-            float jx = (float)((rand() & 31) - 16), jz = (float)((rand() & 31) - 16);   /* which 0x41b2c0 never stores: pos = res (0x41b586) */
+            float jx = (float)((int)(crt_rand() & 31) - 16), jz = (float)((int)(crt_rand() & 31) - 16);   /* which 0x41b2c0 never stores: pos = res (0x41b586) */
             e->want_ang = atan2f(res.z - (from.z + jz), res.x - (from.x + jx)); /* 0x41ba60(from', res, 0): the target angle from the jittered point to res */
         }
     }
@@ -564,12 +566,14 @@ static void enemy_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
         if (!see) { e->st = 7; break; }
         e->want_ang = chase_target(e, to_player);                     /* 0x41bc80 -> Steer 0x41bd00 */
         e->turn_t = fabsf(ang_diff(to_player, e->ang)) / e->P.turn_fast; e->speed = e->want_speed = e->P.run; e->behav = 1; e->st = 1; if (e->type == 13) e->reload = e->P.reload;
+        e->react_t = game_enemy_delay();                              /* PORT EXTRA: it chases at once but holds its attack (0 = the original) */
         /* fallthrough */
     case 1:
         if (!see) { e->st = 7; break; }
         steer(e, e->want_ang, e->P.turn_fast, dt); e->want_ang = chase_target(e, to_player);   /* Steer 0x41bd00: H.Tick toward the last target, then the new one */
         if ((e->turn_t -= dt) <= 0) { step = (Vec3){ cosf(e->ang) * e->speed * dt, 0, sinf(e->ang) * e->speed * dt }; anim = EA_RUN; } else anim = EA_TURN;
         e->atk_t = ea_len(e, EA_DASH) + 0.5f * ea_len(e, EA_MISS);
+        if (e->react_t > 0) { e->react_t -= dt; break; }              /* PORT EXTRA (Gameplay page): no dash, dive or shot yet */
         if (e->type == 13) {                                      /* ghost 0x413d0d: dives within 300 (xz) when it moves at the player (3D dot), else fires while chasing */
             float d3 = sqrtf(dx * dx + dy * dy + dz * dz);
             if (dxz <= e->P.melee && d3 > 1e-3f && (cosf(e->ang) * dx + sinf(e->ang) * dz) / d3 > 0.95f) { e->speed = e->want_speed = e->P.dash; e->st = 4; break; }
@@ -711,6 +715,9 @@ static int shooter_vector(const Instance *in, uint32_t tc, Vec3 *p0)      /* 0x4
     for (uint32_t i = 0; i < mo->nnodes; i++) if (mo->nodes[i].kind == 0x20 && mo->nodes[i].type_code == tc && mo->nodes[i].npoints >= 1) { *p0 = ins_point_world(in, mo->nodes[i].point_base); return 1; }
     return 0;
 }
+/* PORT EXTRA (Gameplay page): a shooter that just noticed Woody reloads for the chosen delay first; the original fires at once
+ * (Reset zeroes the reload timer, docs/ENEMY.md) */
+static void shooter_react(Enemy *e) { float d = game_enemy_delay(); if (e->reload < d) e->reload = d; }
 static void shooter_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
 {
     Instance *in = e->inst;
@@ -739,7 +746,7 @@ static void shooter_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
             if (nx < 0 || nx >= (int)T->npoints) { if (T->closed) nx = nx < 0 ? (int)T->npoints - 1 : 0; else { e->path_dir = -e->path_dir; nx = (int)e->path_to + e->path_dir; } }
             e->path_to = (uint32_t)nx;
         } else { e->ang = atan2f(bz, bx); e->pos.x += bx / l * mv; e->pos.z += bz / l * mv; }
-        if (e->cool < 0 && see) { e->home = e->pos; e->behav = 2; e->st = S_WAIT; }
+        if (e->cool < 0 && see) { e->home = e->pos; e->behav = 2; e->st = S_WAIT; shooter_react(e); }
         break; }
     case S_TOWANDER:                                              /* 0x417057: speed P+0x08 direct, turn speed P+0x10, Wander restarts */
         e->speed = e->want_speed = e->P.walk; wander_restart(e, -1); e->behav = 0; e->st = S_WANDER;
@@ -747,7 +754,7 @@ static void shooter_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
     case S_WANDER: {                                              /* 0x4170a3 */
         float l = wander_tick(e, dt);
         step = (Vec3){ cosf(e->ang) * l, 0, sinf(e->ang) * l };
-        if (e->cool < 0 && see) e->st = S_WAIT;
+        if (e->cool < 0 && see) { e->st = S_WAIT; shooter_react(e); }
         if (in->traj.npoints > 1) { float hx = e->home.x - e->pos.x, hz = e->home.z - e->pos.z; if (hx * hx + hz * hz < 10.0f * 10.0f) { e->behav = 3; e->st = S_PATH; } }   /* even when 11 was just set */
         break; }
     case S_WAIT: {                                                /* reloading: stands still and does NOT turn (H.Tick is not called in 0x4171bd) */
@@ -986,7 +993,7 @@ static void bomber_update(Enemy *e, struct Player *pl, Vec3 cam, float dt)
     case 0:                                                             /* idle 0x4111db: variations 9..13 (.ins 11..15, speed 2) */
         if (see) { e->st = 2; break; }
         if ((e->idle_t -= dt) <= 0) {
-            int n = 9 + rand() % 5; if (n == e->idle_a) n = 9 + (n - 8) % 5;
+            int n = 9 + crt_mod(5); if (n == e->idle_a) n = 9 + (n - 8) % 5;
             e->idle_a = n; const Model *m = in->model; int s = n + 2; e->idle_t = (uint32_t)s < m->nanims ? m->anims[s].duration_s / 2.0f : 1.0f;
             in->anim = -1;                                              /* restart even when the same one comes again */
         }
@@ -1085,6 +1092,7 @@ static void enemy_reset(Enemy *e)
         e->speed = e->want_speed = e->P.walk;
         if (in->traj.npoints > 1) { e->st = 0; e->behav = 3; } else { e->st = e->type >= 7 && e->type <= 9 ? S_WANDER : 8; wander_restart(e, -1); e->behav = 0; }
     }
+    if (e->type == 13) e->hand = crt_rand() & 1;                  /* 0x413a77: the ghost's first hand, drawn after the behaviour restart */
     enemy_place(e);
 }
 

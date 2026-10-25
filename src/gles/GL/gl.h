@@ -7,11 +7,15 @@
  * - client arrays (vertex, colour, texcoords of both units) as vertex attributes, glBegin / glEnd as client arrays
  *   (GL_QUADS as triangles, GL_POLYGON as a fan)
  * - glReadPixels into GL_RGB, GL_CLAMP (= CLAMP_TO_EDGE), glDrawElements with GL_UNSIGNED_INT on a bare ES 2.0
- * glPolygonMode (the F3 wireframe), lighting and fog are not there (the engine never turns the last two on). */
+ * glPolygonMode (the F3 wireframe), lighting and fog are not there (the engine never turns the last two on).
+ * For the shader passes of the Graphics page (gtao.c, postfx.c, ES 3.0 only): glUseProgram of an own program (glBegin then
+ * feeds its attribute 0 the positions), glPushAttrib / glPopAttrib of the state they change, and plat_gl_proc hands out the
+ * ES 2.0 / 3.0 entry points they ask for. */
 #ifndef WOODY_GLES_GL_H
 #define WOODY_GLES_GL_H
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#define WOODY_GLES 1                          /* the engine draws through this shim */
 
 typedef double GLdouble;
 /* the desktop / ES 1.1 names the engine uses */
@@ -53,6 +57,7 @@ typedef double GLdouble;
 #define GL_SRC1_ALPHA            0x8589
 #define GL_BLEND_SRC             0x0BE1
 #define GL_BLEND_DST             0x0BE0
+#define GL_ALL_ATTRIB_BITS       0xFFFFFFFF
 
 void gles_begin(GLenum mode);
 void gles_end(void);
@@ -90,6 +95,9 @@ void gles_tex_envi(GLenum target, GLenum pname, GLint v);
 void gles_tex_envf(GLenum target, GLenum pname, GLfloat v);
 void gles_get_tex_enviv(GLenum target, GLenum pname, GLint *v);
 void gles_alpha_func(GLenum func, GLfloat ref);
+void gles_use_program(GLuint p);
+void gles_push_attrib(GLbitfield mask);
+void gles_pop_attrib(void);
 void (*gles_proc(const char *name))(void);   /* plat_gl_proc: the extension entry points the engine asks for */
 
 #ifndef WOODY_GLES_IMPL
@@ -134,5 +142,8 @@ void (*gles_proc(const char *name))(void);   /* plat_gl_proc: the extension entr
 #define glTexEnvf                 gles_tex_envf
 #define glGetTexEnviv             gles_get_tex_enviv
 #define glAlphaFunc               gles_alpha_func
+#define glUseProgram              gles_use_program
+#define glPushAttrib              gles_push_attrib
+#define glPopAttrib               gles_pop_attrib
 #endif
 #endif

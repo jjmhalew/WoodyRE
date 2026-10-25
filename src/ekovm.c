@@ -1,5 +1,6 @@
 /* EKO CODE VM – see ekovm.h and docs/VM.md for the mapping to Woody.exe addresses. */
 #include "ekovm.h"
+#include "crtrand.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -14,6 +15,11 @@ const char *eko_opcode_names[64] = {
     "VOL_ALL_F1", "COL_B3_BIT0", "COL_B2_BIT0", "COL_ALL_F4", "COL_ACTOR_F2", "COL_ACTOR_F4", "COL_ACTOR_F1", "CUT", "MSGTEST", "MSGCLEAR",
     "VOL_PAIR", "DELAYPOP", "RANDOM", "?63"
 };
+
+/* the C runtime rand() of Woody.exe (crtrand.h): here because both the game and the ekorun harness link this file */
+static uint32_t g_holdrand = 1;                                         /* ptd+0x14, 1 at thread start; the exe never calls srand */
+uint32_t crt_rand(void) { g_holdrand = g_holdrand * 214013u + 2531011u; return (g_holdrand >> 16) & 0x7fff; }   /* 0x49a7bd */
+void crt_srand(uint32_t seed) { g_holdrand = seed; }
 
 static void warn(EkoVM *vm, const char *s) { if (vm->on_warn) vm->on_warn(vm, s, vm->user); }
 
@@ -478,8 +484,7 @@ void eko_run(EkoVM *vm, uint32_t pc)
         case 61: x = POP(); delay_add(vm, vm->time + x, a1); pc += 2; break;   /* 0x443140 */
         case 62: {                                                      /* 0x443c50 */
             uint32_t m = (uint32_t)POP(); if (m == 0) m = 1;
-            uint32_t r = vm->rand_fn ? vm->rand_fn(vm->user) : (uint32_t)rand();
-            PUSH((int32_t)(r % m)); pc += 1; break;
+            PUSH((int32_t)(crt_rand() % m)); pc += 1; break;          /* 0x443c74: the CRT rand() itself, the game's one stream */
         }
         default: vm->error = 1; vm->stop = 1; break;
         }

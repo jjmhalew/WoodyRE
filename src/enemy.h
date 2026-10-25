@@ -60,6 +60,7 @@ typedef struct BossBState {
 
 typedef struct Enemy {
     EnemyParams P; float reload; Vec3 warn, dodge_dir;                   /* shooters */
+    float react_t;                                                       /* PORT EXTRA (Gameplay page): time left before a melee enemy that noticed Woody may attack */
     int ac_cur, ac_nq, ac_q[16], ac_slot[4], ac_c0; float ac_start, ac_speed, ac_base, ac_pos;   /* shooters: AnimCtrl +0x1c4 (+0x48 record, +0x44/+0x04 queue) and the instance clock (slots +0xb0, +0xc0, +0xa8, +0xa0, +0xa4, +0xac) */
     BossState b;                                                         /* type 14 */
     BossBState bb;                                                       /* types 15, 16 */
@@ -147,6 +148,7 @@ void enemies_boss_msg(EnemySet *s, Instance *inst, int id, uint32_t arg, Instanc
 /* implemented by the engine */
 int  game_var_get(uint32_t var);
 void game_var_set(uint32_t var, int v);                                       /* SetVar 0x443ca0: wakes the watchers */
+float game_enemy_delay(void);                                                 /* PORT EXTRA (Gameplay page): s before a noticing enemy attacks, 0 = the original */
 void game_cam_shake(float t);                                                 /* 0x41fbb0 */
 void game_boss_bar(int on, int cur, int max);                                 /* 0x4484d0 */
 void game_explosion(Vec3 p);                                                  /* 0x477060 kind 1 (two flash records) */

@@ -15,6 +15,7 @@
 #include "water.h"
 #include "player.h"
 #include "hud.h"
+#include "crtrand.h"
 
 #define MAXV 400                                                   /* 0x4734ca: more grid vertices -> "Un volume d'eau a trop de face" */
 
@@ -38,9 +39,7 @@ typedef struct { Vec3 pos; float age; int on; } Mark;             /* 0x473050: 0
 static Water g_w[16]; static int g_nw;
 static Wake g_wake[64]; static Mark g_mark[512];
 static float g_cos[512], g_spec[128];                              /* [0x5e823c]: cos(i 2pi/512), and at +0x900 0.5 cos^8 (0x402520) */
-static uint32_t g_seed = 0x57a7e4;
 
-static float rnd01(void) { g_seed = g_seed * 214013u + 2531011u; return (float)((g_seed >> 16) & 0x7fff) / 32767.0f; }   /* 0x43ff40 */
 static void tables(void)
 {
     if (g_cos[0] != 0) return;
@@ -120,11 +119,11 @@ static void build(Water *w, const TexFile *tex)
         float s = (float)i / (float)(w->nc - 1), t = (float)j / (float)(w->nr - 1); int k = j * w->nc + i;
         w->v[k] = (Vec3){ A.x + e1.x * s + e2.x * t, A.y + e1.y * s + e2.y * t + 10.0f, A.z + e1.z * s + e2.z * t };   /* 0x4a9750: 10 above the top face */
         w->uv[k][0] = s * w->len1 / w->cell; w->uv[k][1] = t * w->len2 / w->cell;   /* the texture repeats every `cell` units */
-        w->ph[k] = (float)(int)(rnd01() * 512.0f);
+        w->ph[k] = (float)(int)(crt_rnd() * 512.0f);
     }
     w->centre = (Vec3){ w->v[0].x + e2.x * 0.5f + e1.x * 0.5f, w->v[0].y + e2.y * 0.5f + e1.y * 0.5f, w->v[0].z + e2.z * 0.5f + e1.z * 0.5f };
     in->noncollide = 1;                                            /* 0x473876: inst+8 |= 0x40 */
-    w->wake_t = rnd01() * 5.0f;                                    /* 0x4a9884 */
+    w->wake_t = crt_rnd() * 5.0f;                                    /* 0x4a9884 */
     w->ready = 1;
     if (wenv("WOODY_WATERLOG")) printf("water: instance %u grid %d x %d, edges %.0f %.0f, cell %.0f, amp %.1f, alpha %.2f, group %d, centre %.0f %.0f %.0f",
                                          in->index, w->nc, w->nr, w->len1, w->len2, w->cell, w->amp, w->alpha, w->group, w->centre.x, w->centre.y, w->centre.z), puts("");
@@ -168,7 +167,7 @@ void water_update(float dt, struct Player *pl)
         int N = w->nc * w->nr;
         /* Draw 0x4741d6 advances every phase by ftol((rand 30 + 250) dt) each drawn frame, about half a turn per second;
          * the port keeps the fraction so the speed does not depend on the frame rate */
-        for (int k = 0; k < N; k++) { w->ph[k] += (rnd01() * 30.0f + 250.0f) * dt; if (w->ph[k] >= 512.0f) w->ph[k] -= 512.0f; }
+        for (int k = 0; k < N; k++) { w->ph[k] += (crt_rnd() * 30.0f + 250.0f) * dt; if (w->ph[k] >= 512.0f) w->ph[k] -= 512.0f; }
         if (!w->inst->visible || !game_enemy_thinks(w->inst)) continue;   /* the Update vtbl[3] 0x4747f0 runs from 0x42b400 only for the
                                                                          * instances of this frame's list world+0x64 (INSTANCE.md 4.1) */
         if ((w->wake_t -= dt) < 0) {                               /* 0x4747fb: a wake from a random point of the surface */
@@ -176,12 +175,12 @@ void water_update(float dt, struct Player *pl)
             float l1 = vlen(d1), l2 = vlen(d2);
             if (l1 > 0) { d1.x /= l1; d1.z /= l1; d1.y /= l1; }
             if (l2 > 0) { d2.x /= l2; d2.z /= l2; d2.y /= l2; }
-            float a = rnd01() * w->len1, b = rnd01() * w->len2;
+            float a = crt_rnd() * w->len1, b = crt_rnd() * w->len2;
             Vec3 p = { d2.x * b + d1.x * a + v0.x, v0.y, d2.z * b + d1.z * a + v0.z };
-            int ang = (int)(rnd01() * 512.0f);                     /* 0x499580 truncates */
+            int ang = (int)(crt_rnd() * 512.0f);                     /* 0x499580 truncates */
             for (int e = 0; e < 64; e++) if (!g_wake[e].on) {
                 g_wake[e] = (Wake){ p, { g_cos[ang & 511], 0, -g_cos[(ang + 128) & 511] }, 0, 0, 1 }; break; }
-            w->wake_t += rnd01() * 2.0f;
+            w->wake_t += crt_rnd() * 2.0f;
         }
         if (pl && pl->inst) {                                      /* 0x4749ca: the player's position + 120 in the box = Kill(7) */
             Vec3 p = { pl->pos.x, pl->pos.y + 120.0f, pl->pos.z };   /* 0x4abcb4 */

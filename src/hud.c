@@ -2,6 +2,7 @@
  * Everything in 640x480 virtual coordinates, origin top left. Colours are 0xAARRGGBB with RGB 0x80 = 1.0 (docs/HUD_TEXT.md 5.2). */
 #include "hud.h"
 #include "texpack.h"
+#include "crtrand.h"
 #include "plat.h"
 #include <GL/gl.h>
 #include <stdio.h>
@@ -320,6 +321,17 @@ static const struct { const char *en, *tr[4]; } k_port_tr[] = {   /* tr = Polish
     { "Fullscreen",       { "Pełny ekran", "Pantalla completa", "Tela cheia", "Полный экран" } },
     { "VSync",            { "Synchronizacja pionowa", "Sincronización vertical", "Sincronização vertical", "Верт. синхронизация" } },
     { "Frame rate limit", { "Limit klatek", "Límite de fotogramas", "Limite de quadros", "Лимит кадров" } },
+    { "Graphics",         { "Grafika", "Gráficos", "Gráficos", "Графика" } },
+    { "Ambient occlusion", { "Okluzja otoczenia", "Oclusión ambiental", "Oclusão de ambiente", "Фоновое затенение" } },
+    { "Texture sharpness", { "Ostrość tekstur", "Nitidez de texturas", "Nitidez das texturas", "Четкость текстур" } },
+    { "Edge smoothing",   { "Wygładzanie krawędzi", "Suavizado de bordes", "Suavização de bordas", "Сглаживание краев" } },
+    { "Multisampling",    { "Multisampling", "Multimuestreo", "Multiamostragem", "Мультисэмплинг" } },
+    { "Original",         { "Oryginalna", "Original", "Original", "Исходная" } },
+    { "Low",              { "Niskie", "Bajo", "Baixo", "Низкое" } },
+    { "Medium",           { "Średnie", "Medio", "Médio", "Среднее" } },
+    { "High",             { "Wysokie", "Alto", "Alto", "Высокое" } },
+    { "Ultra",            { "Ultra", "Ultra", "Ultra", "Ультра" } },
+    { "Not supported",    { "Nieobsługiwane", "No compatible", "Não suportado", "Не поддерживается" } },
     { "Device:",          { "Urządzenie:", "Dispositivo:", "Dispositivo:", "Устройство:" } },
     { "Controller",       { "Pad", "Mando", "Controle", "Геймпад" } },
     { "Keyboard",         { "Klawiatura", "Teclado", "Teclado", "Клавиатура" } },
@@ -350,6 +362,15 @@ static const struct { const char *en, *tr[4]; } k_port_tr[] = {   /* tr = Polish
     { "Left Shift",       { "Lewy Shift", "Mayús izquierda", "Shift esquerdo", "Левый Shift" } },
     { "Right Shift",      { "Prawy Shift", "Mayús derecha", "Shift direito", "Правый Shift" } },
     { "Left Alt",         { "Lewy Alt", "Alt izquierdo", "Alt esquerdo", "Левый Alt" } },
+    { "Gameplay",            { "Rozgrywka", "Jugabilidad", "Jogabilidade", "Игровой процесс" } },
+    { "Skip cutscenes:",      { "Pomijanie scenek:", "Saltar escenas:", "Pular cenas:", "Пропуск сцен:" } },
+    { "Lasers and blasts:",   { "Lasery i wybuchy:", "Láseres y explosiones:", "Lasers e explosões:", "Лазеры и взрывы:" } },
+    { "Cost a life",         { "Tracisz życie", "Una vida", "Uma vida", "Одна жизнь" } },
+    { "Cost a heart",        { "Tracisz serce", "Un corazón", "Um coração", "Одно сердце" } },
+    { "Enemy first attack:",  { "Pierwszy atak wroga:", "Primer ataque enemigo:", "Primeiro ataque inimigo:", "Первая атака врага:" } },
+    { "At once",             { "Od razu", "Al instante", "Na hora", "Сразу" } },
+    { "Lives after game over:", { "Życia po końcu gry:", "Vidas tras perder:", "Vidas após perder:", "После проигрыша жизней:" } },
+    { "As saved",            { "Jak w zapisie", "Las guardadas", "As salvas", "Как в сохранении" } },
     { "Right Alt",        { "Prawy Alt", "Alt derecho", "Alt direito", "Правый Alt" } } };
 const char *hud_tr(const char *en)
 {
@@ -422,7 +443,7 @@ static uint16_t port_glyph(unsigned c)
  * through g_chr (font_letters), again whenever another font was loaded. A letter the level font lacks (the English ones have
  * no "Z" or "j", the Polish no "X", the Russian no "J" or "z") comes from the Credits font as 0x8000 | its code, else
  * port_glyph's fallbacks, else the space. Ref = 0x7f000000 | slot. */
-static struct { char a[128]; uint16_t u[64]; unsigned gen; } g_pstr[96]; static int g_npstr;   /* 0..63 kept for good, 64..95 the rewritable ones of hud_port_str_tmp */
+static struct { char a[128]; uint16_t u[64]; unsigned gen; } g_pstr[160]; static int g_npstr;   /* 0..127 kept for good, 128..159 the rewritable ones of hud_port_str_tmp */
 static void port_encode(int i)
 {
     int n = 0; uint16_t sp = g_chr[' '] ? g_chr[' '] : 18;
@@ -440,21 +461,21 @@ static void port_codes(int i, const char *ascii)
 uint32_t hud_port_str(const char *ascii)
 {
     int i; for (i = 0; i < g_npstr; i++) if (!strcmp(g_pstr[i].a, ascii)) return 0x7f000000u | (uint32_t)i;
-    if (g_npstr == 64) return 0x7f000000u;
+    if (g_npstr == 128) return 0x7f000000u;
     port_codes(i, ascii); g_npstr++;
     return 0x7f000000u | (uint32_t)i;
 }
 uint32_t hud_port_str_tmp(int k, const char *ascii)  /* slot k (0..31), rewritten on every call: for texts that keep changing (the Controls page) */
 {
     if (k < 0 || k >= 32) return 0x7f000000u;
-    port_codes(64 + k, ascii);
-    return 0x7f000000u | (uint32_t)(64 + k);
+    port_codes(128 + k, ascii);
+    return 0x7f000000u | (uint32_t)(128 + k);
 }
 static const uint16_t *hud_string(uint32_t ref)
 {
     uint32_t i = ref & 0xffff;
     if ((ref >> 24) == 0x7f) {
-        if (!((int)i < g_npstr || (i >= 64 && i < 96))) return NULL;
+        if (!((int)i < g_npstr || (i >= 128 && i < 160))) return NULL;
         if (g_pstr[i].gen != g_font_gen) port_encode((int)i);
         return g_pstr[i].u;
     }
@@ -518,7 +539,6 @@ static struct {
 
 void hud_anim_reset(void) { memset(&A, 0, sizeof A); }
 
-static float frnd(void) { return (float)rand() / (float)RAND_MAX; }
 static float costab(int k) { return (float)cos(6.2831853 * (k & 511) / 512.0); }   /* the engine's 512-entry table at [0x5e823c] */
 
 /* a sprite into an explicit destination rect (0x480a10; 0x460480 is the same thing with a uniform scale) */
@@ -575,11 +595,11 @@ static void fly_trail(int kind, float dx, float dy, float w, float h)  /* 0x47b7
         if (A.ngh < 128) {
             int i = A.ngh++;
             A.gh[i].mode = mode; A.gh[i].t = A.fly[kind].t - ut;        /* born already this old */
-            r = costab((int)(frnd() * 180.0f)) + 1.0f;
+            r = costab((int)(crt_rnd() * 180.0f)) + 1.0f;
             A.gh[i].w0 = r * gw * 0.25f; A.gh[i].h0 = r * gh * 0.25f;
             if (!mode) {                                               /* 0x47b800: a blob beside the icon that shrinks away in 0.3 s */
-                r = costab((int)(frnd() * 180.0f)); A.gh[i].x = dx < 0 ? gx + r * 10.0f + gw * 0.25f : gx - gw * 0.25f - r * 10.0f;
-                r = costab((int)(frnd() * 180.0f)); A.gh[i].y = dy < 0 ? gy + r * 10.0f + gh * 0.25f : gy - gh * 0.25f - r * 10.0f;
+                r = costab((int)(crt_rnd() * 180.0f)); A.gh[i].x = dx < 0 ? gx + r * 10.0f + gw * 0.25f : gx - gw * 0.25f - r * 10.0f;
+                r = costab((int)(crt_rnd() * 180.0f)); A.gh[i].y = dy < 0 ? gy + r * 10.0f + gh * 0.25f : gy - gh * 0.25f - r * 10.0f;
                 A.gh[i].vx = dx / FLY_DUR * 0.2f; A.gh[i].vy = dy / FLY_DUR * 0.2f;
                 A.gh[i].life = 0.3f; A.gh[i].dw = A.gh[i].w0 / 0.3f; A.gh[i].dh = A.gh[i].h0 / 0.3f;
             } else {                                                   /* 0x47ba10: two glows winding 3.5 turns around the flight line, crawling at a fifth of its speed */

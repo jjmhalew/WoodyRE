@@ -20,6 +20,7 @@
 #include "level.h"
 #include "render_gl.h"
 #include "ekovm.h"
+#include "crtrand.h"
 #include "player.h"
 #include "instance.h"
 #include "enemy.h"
@@ -33,6 +34,8 @@
 #include "datasetup.h"
 #include "pad.h"
 #include "texpack.h"
+#include "gtao.h"
+#include "postfx.h"
 #ifdef WOODY_GUI
 #define WOODY_DEBUG_TITLE 0                     /* the release build keeps the plain window title */
 #define WOODY_DEBUG_KEYS (wenv("WOODY_DEBUGKEYS") != NULL)   /* and the developer keys only on request */
@@ -44,6 +47,9 @@
 
 static InsFile g_ins;
 static int g_log_msgs = 1;
+#ifndef WOODY_LOG_MAX
+#define WOODY_LOG_MAX (32L << 20)                /* woodyre.log starts again past this size (plat_sdl.c: the same for the Android tee) */
+#endif
 static Player *g_player;
 static const Renderer *g_rnd; static const GelFile *g_gel;              /* the current level's renderer and world, for game_enemy_thinks() */
 static EnemySet g_enemies;
@@ -69,7 +75,6 @@ static int level_index(const char *name) { for (int i = 0; i < 29; i++) if (!_st
 static struct { int state, anim, nactors; Instance *main_inst, *vec; struct { Instance *inst; int anim; } actor[32]; uint32_t var; float remain, timer; int rtc; } g_cin;
 static int cin_running(void) { return g_cin.state == 2 || g_cin.state == 3; }               /* 0x44f2e0: Perso update skipped */
 
-static uint32_t msvc_rand(void *user);
 /* ---- camera manager: follow camera (mode 1, player.c) + the fixed script cameras (docs/CAMERA_SCRIPT.md, CAMERA.md 4 and 6.1)
  * mode 2 (message 510) / mode 4 (520, letterbox, player frozen): camera at the .ins camera position looking at
  * target origin + (0, f, 0). A mode change blends linearly from the frozen old camera unless the script asked for a cut. */
@@ -339,7 +344,7 @@ static void cam_update(Player *p, FreeCamera *cam, float dt, int behind_key)
     if (g_cam.shake > 0) {                                       /* 0x41fbd0 after the mode update, modes 1 2 4 8 0x10 0x20 (0x41ffb4): only the view direction trembles, +-5 min(t,3) per axis */
         int m = g_cam.mode; if (m == 1 || m == 2 || m == 4 || m == 8 || m == 0x10 || m == 0x20) {
             float a = g_cam.shake < 3.0f ? g_cam.shake : 3.0f;
-            look.x += (float)((int)(msvc_rand(NULL) % 1000) - 500) * 0.01f * a; look.y += (float)((int)(msvc_rand(NULL) % 1000) - 500) * 0.01f * a; look.z += (float)((int)(msvc_rand(NULL) % 1000) - 500) * 0.01f * a; }
+            look.x += (float)(crt_mod(1000) - 500) * 0.01f * a; look.y += (float)(crt_mod(1000) - 500) * 0.01f * a; look.z += (float)(crt_mod(1000) - 500) * 0.01f * a; }
         g_cam.shake -= dt;
     }
     Vec3 to = { look.x - P.x, look.y - P.y, look.z - P.z };
@@ -485,17 +490,27 @@ static char g_bind_cfg[32][100]; static int g_nbind_cfg;   /* woodyre.cfg key_* 
 static void ctl_write(FILE *f);
 static int g_cam_speed = 100;                           /* woodyre.cfg camera_speed= (percent): how fast the right stick turns / raises the follow camera (PORT EXTRA, Controls page) */
 static const int k_cam_speeds[] = { 25, 50, 75, 100, 150, 200 };
+/* PORT EXTRAS of the Gameplay page 0x43 (docs/GAMEPLAY.md), all off = the original game. woodyre.cfg skip_cutscenes=,
+ * soft_hazards= (lasers, lightning and blasts take a heart instead of a life), enemy_delay= (tenths of a second before an
+ * enemy that noticed Woody attacks), gameover_lives= (lives a slot loaded after a game over has at least, 0 = as saved) and
+ * gameover_pending= (a game over happened and no slot was loaded since) */
+typedef struct { int skip, soft, delay, lives; } Gameplay;
+static Gameplay g_gp; static int g_go_pending, g_skip;
+static const int k_gp_delay[] = { 0, 5, 10, 15 }, k_gp_lives[] = { 0, 3, 5, 9 };
 static int g_pad_dz = 30;                               /* woodyre.cfg pad_deadzone= (percent): the stick dead zone of the pads (PORT EXTRA), default the original's 30 % (0x467a80) */
 /* ---- display (docs/DISPLAY.md; everything here is a PORT EXTRA). The original runs exclusive fullscreen at the Woody.cfg mode
  * (Detect's list, default 640x480), always 4:3 in the layout, and paces itself only by Flip(DDFLIP_WAIT) = vsync (0x47ee90);
  * no frame cap, dt clamped to 0.1 s (0x40185b). The port: a window of any size or borderless fullscreen, 4:3 pillarboxed or a
- * wide Hor+ view (the vertical fov stays, the HUD / menus keep their 640x480 layout centred), vsync, an optional frame cap. */
-typedef struct { int wide, w, h, full, vsync, cap; } Display;
-static Display g_disp = { 1, 1280, 800, 0, 1, 0 };      /* woodyre.cfg; 1280x800 wide = the port's window before these options */
+ * wide Hor+ view (the vertical fov stays, the HUD / menus keep their 640x480 layout centred), vsync, an optional frame cap.
+ * The Graphics page (all off by default, the original's look): ambient occlusion (gtao.c), texture sharpness = anisotropic
+ * filtering (render_gl.c, 1 = off), edge smoothing SMAA 0..4 and multisampling MSAA 0/2/4/8 (postfx.c). */
+typedef struct { int wide, w, h, full, vsync, cap, ao, aniso, smaa, msaa; } Display;
+static Display g_disp = { 1, 1280, 800, 0, 1, 0, 0, 1, 0, 0 };     /* woodyre.cfg; 1280x800 wide = the port's window before these options */
 static Display g_dnow;                                  /* what runs: g_disp, or the defaults for a --shot run, plus the overrides */
 static int g_disp_dirty;                                /* the main loop applies g_dnow (window mode, vsync) */
 static const int k_disp_res[][2] = { {640,480}, {800,600}, {1024,768}, {1280,960}, {1280,720}, {1280,800}, {1600,900}, {1920,1080}, {2560,1440}, {3840,2160} };
 static const int k_disp_cap[] = { 0, 30, 60, 120, 144, 240 };
+static const int k_gfx_aniso[] = { 1, 2, 4, 8, 16 }, k_gfx_msaa[] = { 0, 2, 4, 8 };
 #define NRES (int)(sizeof k_disp_res / sizeof k_disp_res[0])
 #define NCAP (int)(sizeof k_disp_cap / sizeof k_disp_cap[0])
 static void opt_read(void)
@@ -508,8 +523,16 @@ static void opt_read(void)
         else if (sscanf(line, "fullscreen=%d", &v) == 1) g_disp.full = v != 0; else if (sscanf(line, "vsync=%d", &v) == 1) g_disp.vsync = g_setup.vsync = v != 0;
         else if (sscanf(line, "reverse_stereo=%d", &v) == 1) g_setup.rev = v != 0; else if (sscanf(line, "film_sound=%d", &v) == 1) g_setup.film = v != 0;
         else if (sscanf(line, "logos=%d", &v) == 1) g_logos = v != 0;
+        else if (sscanf(line, "ao=%d", &v) == 1) g_disp.ao = v != 0;
+        else if (sscanf(line, "aniso=%d", &v) == 1) g_disp.aniso = v < 1 ? 1 : v > 16 ? 16 : v;
+        else if (sscanf(line, "smaa=%d", &v) == 1) g_disp.smaa = v < 0 ? 0 : v > 4 ? 4 : v;
+        else if (sscanf(line, "msaa=%d", &v) == 1) g_disp.msaa = v < 2 ? 0 : v > 8 ? 8 : v;
         else if (sscanf(line, "pad_deadzone=%d", &v) == 1) g_pad_dz = v < 0 ? 0 : v > 90 ? 90 : v;
         else if (sscanf(line, "camera_speed=%d", &v) == 1) g_cam_speed = v < 10 ? 10 : v > 300 ? 300 : v;
+        else if (sscanf(line, "skip_cutscenes=%d", &v) == 1) g_gp.skip = v != 0; else if (sscanf(line, "soft_hazards=%d", &v) == 1) g_gp.soft = v != 0;
+        else if (sscanf(line, "enemy_delay=%d", &v) == 1) g_gp.delay = v < 0 ? 0 : v > 30 ? 30 : v;
+        else if (sscanf(line, "gameover_lives=%d", &v) == 1) g_gp.lives = v < 0 ? 0 : v > 9 ? 9 : v;
+        else if (sscanf(line, "gameover_pending=%d", &v) == 1) g_go_pending = v != 0;
         else if ((!strncmp(line, "key_", 4) || !strncmp(line, "pad_", 4)) && strchr(line, '=') && g_nbind_cfg < 32) {
             line[strcspn(line, "\r\n")] = 0; snprintf(g_bind_cfg[g_nbind_cfg++], sizeof g_bind_cfg[0], "%s", line); }
         else if (sscanf(line, "fpscap=%d", &v) == 1) g_disp.cap = v < 0 ? 0 : v > 1000 ? 1000 : v; } fclose(f); }
@@ -520,7 +543,9 @@ static void opt_write(void)
     FILE *f = fopen("woodyre.cfg", "w"); if (!f) return;
     fprintf(f, "sfx=%d\nmusic=%d\nrumble=%d\n", g_opt.sfx, g_opt.music, g_opt.vib);
     fprintf(f, "aspect=%s\nwindow=%dx%d\nfullscreen=%d\nvsync=%d\nfpscap=%d\n", g_disp.wide ? "wide" : "4:3", g_disp.w, g_disp.h, g_disp.full, g_disp.vsync, g_disp.cap);
+    fprintf(f, "ao=%d\naniso=%d\nsmaa=%d\nmsaa=%d\n", g_disp.ao, g_disp.aniso, g_disp.smaa, g_disp.msaa);
     fprintf(f, "reverse_stereo=%d\nfilm_sound=%d\nlogos=%d\npad_deadzone=%d\ncamera_speed=%d\n", g_setup.rev > 0, g_setup.film != 0, g_logos, g_pad_dz, g_cam_speed);
+    fprintf(f, "skip_cutscenes=%d\nsoft_hazards=%d\nenemy_delay=%d\ngameover_lives=%d\ngameover_pending=%d\n", g_gp.skip, g_gp.soft, g_gp.delay, g_gp.lives, g_go_pending);
     ctl_write(f);
     fclose(f);
 }
@@ -539,6 +564,11 @@ static void disp_apply(Window *w)
     if (g_dnow.cap > 0) timeBeginPeriod(1);                                          /* Sleep(1) of the frame cap: 1 ms, not 15.6 */
     printf("display: %dx%d %s, %s, vsync %s, fps cap %d\n", w->width, w->height, g_dnow.full ? "fullscreen" : "window", g_dnow.wide ? "wide (Hor+)" : "4:3", g_dnow.vsync ? "on" : "off", g_dnow.cap);
     g_disp_dirty = 0;
+}
+static void gfx_apply(void)                             /* the Graphics page's settings (all port extras); cheap, no window change */
+{
+    gtao_enable(g_dnow.ao); rnd_set_aniso(g_dnow.aniso); postfx_set(g_dnow.msaa, g_dnow.smaa, g_dnow.ao);
+    printf("graphics: ambient occlusion %s, texture sharpness %dx, SMAA %d, MSAA %dx\n", g_dnow.ao ? "on" : "off", g_dnow.aniso, g_dnow.smaa, g_dnow.msaa);
 }
 
 /* ---- input (docs/INPUT.md): the key bindings of Woody.cfg, the joystick and the action layer of 0x402940. Everything
@@ -701,7 +731,7 @@ static void in_pad_poll(const Window *w, double tl)              /* PORT EXTRA: 
         double t, d = 0.08; float x, y; unsigned m; int used;
         if (sscanf(s, " %lf:%f:%f:%i%n", &t, &x, &y, (int *)&m, &used) != 4) break;
         s += used; if (*s == ':' && sscanf(s, ":%lf%n", &d, &used) == 1) s += used;
-        if (tl >= t && tl < t + d) { if (!g_in.pad.kind) g_in.pad.kind = PADK_DS5; g_in.pad.lx = x; g_in.pad.ly = y; g_in.pad.buttons = m; }
+        if (tl >= t && tl < t + d) { if (!g_in.pad.kind) g_in.pad.kind = PADK_DS5; g_in.pad.lx = x; g_in.pad.ly = y; g_in.pad.buttons = m; g_in.pad.touch = 0; }
     }
     for (const char *s = wenv("WOODY_RSTICK"); s && *s; ) {   /* testing: WOODY_RSTICK="T:RX:RY[:D] ...", the right stick likewise (default 0.5 s) */
         double t, d = 0.5; float x, y; int used;
@@ -724,7 +754,7 @@ static void in_frame(const Window *w, int fly, double now, double tl)   /* 0x402
             for (int s = 0; s < 4 && g_in.bind[a][s]; s++) { int c = g_in.bind[a][s]; if (c >= IN_JOY && (g_in.jbtn >> (c - IN_JOY) & 1)) { in_set(a, 1.0f); if (a == 4) in_set(12, 1.0f); break; } } }
     }
     if (g_in.pad.kind != PADK_NONE) {                            /* PORT EXTRA: the pads after the joystick, before the keyboard */
-        float x = in_deadzone(g_in.pad.lx, g_pad_dz * 0.01f), y = in_deadzone(g_in.pad.ly, g_pad_dz * 0.01f);
+        float x = g_in.pad.touch ? g_in.pad.lx : in_deadzone(g_in.pad.lx, g_pad_dz * 0.01f), y = g_in.pad.touch ? g_in.pad.ly : in_deadzone(g_in.pad.ly, g_pad_dz * 0.01f);
         if (x > 0) in_set(1, x); else if (x < 0) in_set(0, x);   /* the left stick as the joystick's X / Y */
         if (y > 0) in_set(3, y); else if (y < 0) in_set(2, y);
         for (int a = 0; a < 12; a++)
@@ -771,7 +801,9 @@ static const char *pad_btn_name(int b, int kind)                 /* b = PAD_*; t
     static const char *const sony[PAD_NBUTTONS] = { "Cross", "Circle", "Square", "Triangle", "L1", "R1", "L2", "R2", "Create", "Options", "L3", "R3", "Up", "Down", "Left", "Right", "PS", "Touchpad" };
     static const char *const dpad[4] = { "Dpad Up", "Dpad Down", "Dpad Left", "Dpad Right" };   /* no "-" in the font */
     if (b >= PAD_UP && b <= PAD_RIGHT) return dpad[b - PAD_UP];
+    static const char *const nintendo[PAD_NBUTTONS] = { "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "Minus", "Plus", "LS", "RS", "Up", "Down", "Left", "Right", "Home", "Touchpad" };
     if (kind == PADK_DS4 && b == PAD_BACK) return "Share";
+    if (kind == PADK_SWITCH) return nintendo[b];
     return kind == PADK_DS4 || kind == PADK_DS5 ? sony[b] : k_pad_cfg[b];
 }
 /* the rows of the Controls page; Duck also sets action 8 (duck while riding), which the original binds on its own */
@@ -1019,7 +1051,7 @@ static const MenuItem k_page17[] = { {61,2}, {1,2}, {5,1}, {6,1} };   /* 0x4b5c9
 static const MenuItem k_page18[] = { {4,1}, {36,1}, {2,1} };
 static const MenuItem k_page19[] = { {4,1}, {19,1}, {36,1}, {2,1} };   /* 0x4b5d18: Continue (5), Start again (18), Options (6), Quit (7) */
 static const MenuItem k_page1c[] = { {3,2}, {5,1}, {6,1} };
-static MenuItem k_page1b[] = { {36,2}, {38,0x10}, {39,0x10}, {132,0x10}, {4,1}, {0,1}, {0,1} };   /* items 5 "Display" and 6 "Controls": port extras, ids set on enter (the page starts at 0.33 instead of 0.4 to fit them) */
+static MenuItem k_page1b[] = { {36,2}, {38,0x10}, {39,0x10}, {132,0x10}, {4,1}, {0,1}, {0,1}, {0,1}, {0,1} };   /* items 5 "Display", 6 "Graphics", 7 "Controls" and 8 "Gameplay": port extras, ids set on enter (the page starts at 0.09 instead of 0.4 to fit them) */
 /* port page 0x40 "Display" (docs/DISPLAY.md 4), the list class of 0x1b with choices (flag 0x100): ids and values are
  * port strings or Common 133 "On" / 134 "Off", filled in by disp_items */
 static MenuItem k_page40[7] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
@@ -1045,6 +1077,60 @@ static void disp_step(int item, int dir)               /* left / right on a choi
     case 3: d->full ^= 1; break;
     case 4: d->vsync ^= 1; break;
     case 5: { int i = 0; while (i < NCAP && k_disp_cap[i] != d->cap) i++; i = i == NCAP ? 0 : (i + dir + NCAP) % NCAP; d->cap = k_disp_cap[i]; break; }
+    }
+}
+/* port page 0x42 "Graphics" (docs/DISPLAY.md 5), the same list class: what the GL cannot do shows "Not supported" */
+static MenuItem k_page42[6] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
+static void gfx_items(void)
+{
+    const Display *d = &M.disp; char b[24]; int ns = (int)hud_port_str("Not supported");
+    static const char *k_q[5] = { "Off", "Low", "Medium", "High", "Ultra" };
+    k_page42[0].id = hud_port_str("Graphics");
+    k_page42[1].id = hud_port_str("Ambient occlusion"); k_page42[1].value = !gtao_supported() ? ns : d->ao ? 133 : 134;
+    snprintf(b, sizeof b, "%dx", d->aniso);
+    k_page42[2].id = hud_port_str("Texture sharpness"); k_page42[2].value = rnd_aniso_max() < 2 ? ns : d->aniso > 1 ? (int)hud_port_str(b) : (int)hud_port_str("Original");
+    k_page42[3].id = hud_port_str("Edge smoothing");    k_page42[3].value = !postfx_smaa_supported() ? ns : d->smaa ? (int)hud_port_str(k_q[d->smaa]) : 134;
+    snprintf(b, sizeof b, "%dx", d->msaa);
+    k_page42[4].id = hud_port_str("Multisampling");     k_page42[4].value = postfx_msaa_max() < 2 ? ns : d->msaa ? (int)hud_port_str(b) : 134;
+}
+static int gfx_round(const int *list, int n, int max, int cur, int dir)   /* the next / previous entry of list up to max, round */
+{
+    int m = 0; while (m < n && list[m] <= max) m++; if (m < 2) return cur;
+    int i = 0; while (i < m && list[i] != cur) i++;
+    return list[i == m ? 0 : (i + dir + m) % m];
+}
+static void gfx_step(int item, int dir)
+{
+    Display *d = &M.disp;
+    switch (item) {
+    case 1: if (gtao_supported()) d->ao ^= 1; break;
+    case 2: d->aniso = gfx_round(k_gfx_aniso, 5, rnd_aniso_max(), d->aniso, dir); break;
+    case 3: if (postfx_smaa_supported()) d->smaa = (d->smaa + dir + 5) % 5; break;
+    case 4: d->msaa = gfx_round(k_gfx_msaa, 4, postfx_msaa_max(), d->msaa, dir); break;
+    }
+}
+/* port page 0x43 "Gameplay" (PORT EXTRA, docs/GAMEPLAY.md), the same list class; every first choice is the original game */
+static MenuItem k_page43[6] = { {0,2}, {0,0x100}, {0,0x100}, {0,0x100}, {0,0x100}, {4,1} };
+static Gameplay g_gp_edit;
+static void gp_items(void)
+{
+    const Gameplay *g = &g_gp_edit; char b[24];
+    k_page43[0].id = hud_port_str("Gameplay");
+    k_page43[1].id = hud_port_str("Skip cutscenes:");     k_page43[1].value = g->skip ? 133 : 134;
+    k_page43[2].id = hud_port_str("Lasers and blasts:");  k_page43[2].value = (int)hud_port_str(g->soft ? "Cost a heart" : "Cost a life");
+    snprintf(b, sizeof b, "%d.%d s", g->delay / 10, g->delay % 10);
+    k_page43[3].id = hud_port_str("Enemy first attack:"); k_page43[3].value = g->delay ? (int)hud_port_str(b) : (int)hud_port_str("At once");
+    snprintf(b, sizeof b, "%d", g->lives);
+    k_page43[4].id = hud_port_str("Lives after game over:"); k_page43[4].value = g->lives ? (int)hud_port_str(b) : (int)hud_port_str("As saved");
+}
+static void gp_step(int item, int dir)
+{
+    Gameplay *g = &g_gp_edit;
+    switch (item) {
+    case 1: g->skip ^= 1; break;
+    case 2: g->soft ^= 1; break;
+    case 3: g->delay = gfx_round(k_gp_delay, 4, 99, g->delay, dir); break;
+    case 4: g->lives = gfx_round(k_gp_lives, 4, 99, g->lives, dir); break;
     }
 }
 /* port page 0x41 "Controls" (PORT EXTRA, docs/INPUT.md 6.2): a choice of device, a row per action with its keys or buttons,
@@ -1123,8 +1209,8 @@ static const MenuItem *menu_items(int page, int *n, float *yfrac)
     switch (page) {
     case 0: PG(k_page0, 0.7f)  case 1: PG(k_page1, 0.55f)  case 6: PG(k_page6, 0.4f)  case 7: PG(k_page7, 0.4f)
     case 8: PG(k_page8, 0.4f)  case 9: PG(k_page9, 0.4f)   case 0xa: PG(k_pagea, 0.4f) case 0x17: PG(k_page17, 0.4f)
-    case 0x18: PG(k_page18, 0.05f) case 0x19: PG(k_page19, 0.05f) case 0x1b: PG(k_page1b, 0.33f) case 0x1c: PG(k_page1c, 0.55f)
-    case 0x40: PG(k_page40, 0.25f) case 0x41: PG(k_page41, 0.03f)
+    case 0x18: PG(k_page18, 0.05f) case 0x19: PG(k_page19, 0.05f) case 0x1b: PG(k_page1b, 0.09f) case 0x1c: PG(k_page1c, 0.55f)
+    case 0x40: PG(k_page40, 0.25f) case 0x41: PG(k_page41, 0.03f) case 0x42: PG(k_page42, 0.25f) case 0x43: PG(k_page43, 0.25f)
     }
     #undef PG
     *n = 0; *yfrac = 0; return NULL;
@@ -1373,8 +1459,10 @@ static void menu_enter(int page)
     case 0x1b:                                                         /* 0x460240: the cursor on "Sound FX volume", the values backed up */
         M.opt_bak[0] = g_opt.sfx; M.opt_bak[1] = g_opt.music; M.opt_bak[2] = g_opt.vib;
         k_page1b[1].value = g_opt.sfx; k_page1b[2].value = g_opt.music; k_page1b[3].value = g_opt.vib; M.sel = 1;
-        k_page1b[5].id = hud_port_str("Display"); k_page1b[6].id = hud_port_str("Controls"); break;   /* port extras */
+        k_page1b[5].id = hud_port_str("Display"); k_page1b[6].id = hud_port_str("Graphics"); k_page1b[7].id = hud_port_str("Controls"); k_page1b[8].id = hud_port_str("Gameplay"); break;   /* port extras */
     case 0x40: M.disp = g_dnow; disp_items(); M.sel = 1; break;        /* port page: the cursor on the first choice */
+    case 0x42: M.disp = g_dnow; gfx_items(); M.sel = 1; break;
+    case 0x43: g_gp_edit = g_gp; gp_items(); M.sel = 1; break;
     case 0x41: g_ctl.dev = g_in.pad.kind != PADK_NONE; g_ctl.cap = 0;  /* port page: the pads when one is there */
         memcpy(g_ctl.bak, g_in.bind, sizeof g_ctl.bak); memcpy(g_ctl.pbak, g_in.pbind, sizeof g_ctl.pbak); g_ctl.bak_mode = g_in.mode; g_ctl.bak_cfg = g_in.have_cfg;
         g_ctl.bak_speed = g_cam_speed; ctl_items(); M.sel = 1; break;
@@ -1450,6 +1538,9 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
             case 2:
                 if (r == 24) { menu_enter(1); return; }
                 {   int s = r - 10; g_save = g_file.slot[s];                                              /* 0x456df0, 0x4052db: the slot's own volumes too */
+                    if (g_go_pending) { g_go_pending = 0; opt_write();                                     /* PORT EXTRA: lives after a game over */
+                        for (int c = 0; c < 3 && g_gp.lives; c++) { printf("  LIVES after game over: character %d has %d, at least %d", c, g_save.chr[c].lives, g_gp.lives), puts("");
+                            if (g_save.chr[c].lives < g_gp.lives) g_save.chr[c].lives = g_gp.lives; } }
                     g_opt.music = g_file.music[s] > 100 ? 100 : (int)g_file.music[s]; g_opt.sfx = g_file.sfx[s] > 100 ? 100 : (int)g_file.sfx[s];   /* unsigned: a damaged slot cannot give a negative volume */
                     opt_apply(); car_reset(); menu_enter(3); }
                 return;
@@ -1528,13 +1619,26 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
         }
         if (k->ok && M.sel == 4) { opt_write(); menu_back_to_level_menu(); }                          /* Continue keeps the values */
         else if (k->ok && M.sel == 5) menu_enter(0x40);                                                /* port extra: the Display page */
-        else if (k->ok && M.sel == 6) menu_enter(0x41);                                                /* port extra: the Controls page */
+        else if (k->ok && M.sel == 6) menu_enter(0x42);                                                /* port extra: the Graphics page */
+        else if (k->ok && M.sel == 7) menu_enter(0x41);                                                /* port extra: the Controls page */
+        else if (k->ok && M.sel == 8) menu_enter(0x43);                                                /* port extra: the Gameplay page */
         else if (k->back) { g_opt.sfx = M.opt_bak[0]; g_opt.music = M.opt_bak[1]; g_opt.vib = M.opt_bak[2]; opt_apply(); menu_back_to_level_menu(); }   /* 0x4602a0 */
         break; }
     case 0x40:                                                         /* port page (docs/DISPLAY.md 4): left/right change a choice, Continue applies + saves, back drops the edit */
         if ((k->right || k->left) && M.sel >= 1 && M.sel <= 5) { disp_step(M.sel, k->right ? 1 : -1); disp_items(); hud_menu_blink(0.25f); }
         if (k->ok && M.sel == 6) { g_disp = g_dnow = M.disp; g_disp_dirty = 1; opt_write(); }
         if ((k->ok && M.sel == 6) || k->back) { M.page = 0x1b; M.sel = 5; M.delay = 0; hud_menu_blink(0); }   /* back to Options on "Display", its backups kept */
+        break;
+    case 0x42:                                                         /* port page "Graphics": as the Display page; Continue applies at once (no window change) */
+        if ((k->right || k->left) && M.sel >= 1 && M.sel <= 4) { gfx_step(M.sel, k->right ? 1 : -1); gfx_items(); hud_menu_blink(0.25f); }
+        if (k->ok && M.sel == 5) { g_dnow.ao = M.disp.ao; g_dnow.aniso = M.disp.aniso; g_dnow.smaa = M.disp.smaa; g_dnow.msaa = M.disp.msaa;
+            g_disp.ao = g_dnow.ao; g_disp.aniso = g_dnow.aniso; g_disp.smaa = g_dnow.smaa; g_disp.msaa = g_dnow.msaa; gfx_apply(); opt_write(); }
+        if ((k->ok && M.sel == 5) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
+        break;
+    case 0x43:                                                         /* port page "Gameplay": as the Graphics page; Continue applies at once and saves */
+        if ((k->right || k->left) && M.sel >= 1 && M.sel <= 4) { gp_step(M.sel, k->right ? 1 : -1); gp_items(); hud_menu_blink(0.25f); }
+        if (k->ok && M.sel == 5) { g_gp = g_gp_edit; opt_write(); }
+        if ((k->ok && M.sel == 5) || k->back) { M.page = 0x1b; M.sel = 8; M.delay = 0; hud_menu_blink(0); }
         break;
     case 0x41:                                                         /* port page "Controls": the capture itself runs in ctl_capture */
         if ((k->right || k->left) && M.sel == 1) { g_ctl.dev ^= 1; ctl_items(); hud_menu_blink(0.25f); }
@@ -1549,7 +1653,7 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
             opt_write();
         }
         if (k->back) { memcpy(g_in.bind, g_ctl.bak, sizeof g_ctl.bak); memcpy(g_in.pbind, g_ctl.pbak, sizeof g_ctl.pbak); g_in.mode = g_ctl.bak_mode; g_in.have_cfg = g_ctl.bak_cfg; g_cam_speed = g_ctl.bak_speed; }
-        if ((k->ok && M.sel == 15) || k->back) { M.page = 0x1b; M.sel = 6; M.delay = 0; hud_menu_blink(0); }
+        if ((k->ok && M.sel == 15) || k->back) { M.page = 0x1b; M.sel = 7; M.delay = 0; hud_menu_blink(0); }
         break;
     case 3: if (!M.p.lock) carousel_update(k, dt); break;
     case 4: if (!M.p.lock && k->back) { panel_close(0, 24); panel_iris(0, 0); } break;   /* 0x45bb30 -> 0x45bb40: iris +0x30 = 0 -> 0; confirm is vt[19] = ret */
@@ -1576,6 +1680,7 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
     case 0x1d:                                                         /* GAME OVER: the draw 0x45bbd0 counts +0x14 down and sets +0xc = 1 every frame (no confirm), */
         if (M.go_t > 0 && (M.go_t -= dt) <= 0) {                       /* back gives 24, ignored; result 5 in the frame the timer crosses 0 -> handler 0x405796 */
             save_reset();                                              /* 0x44ffa0: the active save wiped in memory (9 lives, 3.0 health), Woody.sav is not written */
+            if (g_gp.lives) { g_go_pending = 1; opt_write(); }         /* PORT EXTRA (Gameplay page): the next slot loaded gets its lives topped up, also after a restart */
             request_level(0, 0.5f);                                    /* 0x405780: 0x404b60(0.5, 0, 0, 0) -> the title; the page stays up during the fade */
         }
         break;
@@ -1591,8 +1696,8 @@ static void menu_update(EkoVM *vm, const MenuKeys *k, float dt)
 }
 
 /* table 0x405af8: the half-black backdrop and whether the world stands still */
-static int menu_overlay(int page) { return page == 7 || page == 0xa || page == 0xb || page == 0xc || page == 0xe || page == 6 || page == 8 || page == 9 || page == 0x17 || (g_level != 0 && ((page >= 0x18 && page <= 0x1c) || page == 0x40 || page == 0x41)); }   /* 0x40 / 0x41: port pages, as 0x1b */
-static int menu_pauses_world(void) { return g_level != 0 && ((M.page >= 0x18 && M.page <= 0x1c) || M.page == 0x40 || M.page == 0x20 || M.page == 0x1d); }   /* 0x20: the credits level stands still; 0x1d GAME OVER (table 0x405af8 = 0) */
+static int menu_overlay(int page) { return page == 7 || page == 0xa || page == 0xb || page == 0xc || page == 0xe || page == 6 || page == 8 || page == 9 || page == 0x17 || (g_level != 0 && ((page >= 0x18 && page <= 0x1c) || page == 0x40 || page == 0x41 || page == 0x42 || page == 0x43)); }   /* 0x40..0x43: port pages, as 0x1b */
+static int menu_pauses_world(void) { return g_level != 0 && ((M.page >= 0x18 && M.page <= 0x1c) || M.page == 0x40 || M.page == 0x42 || M.page == 0x43 || M.page == 0x20 || M.page == 0x1d); }   /* 0x20: the credits level stands still; 0x1d GAME OVER (table 0x405af8 = 0) */
 
 /* the page layer of a frame: items, then the iris, then the logo (docs/TITLE.md 5.4) */
 static void menu_draw(float dt)
@@ -1666,7 +1771,7 @@ static void results_update(EkoVM *vm, float dt, int ok)               /* the tab
 /* one lazer effect object per marker (0x46e4a0, 0x40 B, flags +0x34 = 0x3c0 for every laser): the timers of the
  * travelling pulse, the lightning arc and the impact at the hit point, plus the arc's own ring of 32 side offsets
  * (pool 0x5e82a8, 100 lazers x 0x20 points of 0x1c B) */
-typedef struct { float acc, s, arc_t, salvo, imp_t, imp_r; int sub, regen, npts; float pts[32][2]; } LaserFx;
+typedef struct { float acc, s, arc_t, salvo, imp_t, imp_r, spk; int sub, regen, npts; float pts[32][2]; } LaserFx;   /* spk = +0x28, the spark clock */
 typedef struct { Instance *inst, *target; int type, on; float len, phase; LaserFx fx[8]; } Laser;
 static Laser g_lasers[64]; static int g_nlasers;
 static Laser *laser_of(const Instance *in) { for (int i = 0; i < g_nlasers; i++) if (g_lasers[i].inst == in) return &g_lasers[i]; return NULL; }
@@ -1716,19 +1821,19 @@ static int laser_hits_player(Vec3 a, Vec3 b, const Player *p)
     float hh = player_body_height(p) * 0.5f, t = seg_cyl(a, b, (Vec3){ p->pos.x, p->pos.y + hh, p->pos.z }, 69.0f * 0.85f, hh);
     return t >= 0 && !(t > 1.0f);                                                   /* 0x450ff2, 0x451002 */
 }
-static float fx_rnd(void);
 static void laser_fx_init(LaserFx *fx)                                             /* 0x46e4a0 */
 {
     memset(fx, 0, sizeof *fx);
     fx->s = -1.0f; fx->salvo = -1.0f; fx->regen = 1;
-    fx->arc_t = fx_rnd() * 2.0f; fx->imp_r = fx_rnd() * 50.0f;
+    fx->arc_t = crt_rnd() * 2.0f; fx->imp_r = crt_rnd() * 50.0f;
 }
 /* the rest of Lazer_Draw 0x46e530 after core and glow: g = the glow pulse, kind = rec+0x2c (0 free end, 1 on geometry, 2 to a target) */
 static void laser_fx_draw(LaserFx *fx, Vec3 a, Vec3 b, int kind, float g, const float *eye, float dt)
 {
     Vec3 d = { b.x - a.x, b.y - a.y, b.z - a.z };
     float len = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
-    fx->acc += fx_rnd() * 0.8f * dt; fx->arc_t += dt; fx->imp_t += dt;             /* 0x46e59b.. */
+    fx->acc += crt_rnd() * 0.8f * dt; fx->arc_t += dt; fx->imp_t += dt;             /* 0x46e59b.. */
+    if (fx->spk < 0.5f) fx->spk += dt;                                             /* 0x46e5d2: +0x28 runs up to 0.5 s */
     /* 0x80, 0x46ea1d: a blob that runs down the beam in 0.25 s, on average every 2.5 s: two textured quads of 0.1 of the length either side of it */
     if (fx->acc > 1.0f) { fx->acc -= 1.0f; fx->s = 0; }
     if (fx->s >= 0 && fx->s < 1.0f) {
@@ -1752,10 +1857,10 @@ static void laser_fx_draw(LaserFx *fx, Vec3 a, Vec3 b, int kind, float g, const 
         float step = n > 0 ? len / (float)n : 0;
         if (fx->regen) {                                                            /* 0x47d370 + 0x47d160: offsets of +-25 across the beam */
             fx->npts = 0;
-            for (int i = 0; i < n; i++) { float *q = fx->pts[fx->npts % 32]; q[0] = fx_rnd() * 50.0f - 25.0f; q[1] = fx_rnd() * 50.0f - 25.0f; if (fx->npts < 32) fx->npts++; }
+            for (int i = 0; i < n; i++) { float *q = fx->pts[fx->npts % 32]; q[0] = crt_rnd() * 50.0f - 25.0f; q[1] = crt_rnd() * 50.0f - 25.0f; if (fx->npts < 32) fx->npts++; }
             fx->regen = 0;
         }
-        float al = fx_rnd();                                                        /* one flicker per frame for the whole arc */
+        float al = crt_rnd();                                                        /* one flicker per frame for the whole arc */
         if (n > 0 && len > 0) {
             Vec3 w = { d.x / len, d.y / len, d.z / len }, u, v;                     /* 0x46d320: rows u, v, w = the beam direction */
             if (w.x < 0.001f && w.x > -0.001f && w.z < 0.001f && w.z > -0.001f) {
@@ -1779,13 +1884,14 @@ static void laser_fx_draw(LaserFx *fx, Vec3 a, Vec3 b, int kind, float g, const 
     /* 0x200, 0x46efb9: where the beam hits geometry, four crossed quads of bank 0 image 5. The spark loop there
      * (50 a second) only draws two random numbers: its spawn is compiled out, so there are no sparks */
     if (kind == 1) {
-        if (fx->imp_t > 0.1f) { fx->imp_t -= 0.1f; fx->imp_r = fx_rnd() * 50.0f; }
+        int nspk = (int)lrintf(fx->spk * 50.0f); fx->spk -= (float)nspk * 0.02f;     /* 0x46efd2: fistp (rounds), then -= n * 0.02 */
+        for (int i = 0; i < nspk; i++) { crt_mod(0x55); crt_rnd(); }                /* 0x46f015 / 0x46f01d: both thrown away, but they move the stream */
+        if (fx->imp_t > 0.1f) { fx->imp_t -= 0.1f; fx->imp_r = crt_rnd() * 50.0f; }
         static const float ic[3] = { 1, 0.4f, 0.4f };
         static const float in[4][3] = { { 0.7f, 0.7f, 0 }, { -0.7f, 0.7f, 0 }, { 0, 0.7f, 0.7f }, { 0, 0.7f, -0.7f } };
         for (int q = 0; q < 4; q++) hud_world_fx_plane(5, &b.x, in[q], 60.0f + fx->imp_r, ic, 0.2f + fx->imp_r * 0.01f);
     }
 }
-static uint32_t msvc_rand(void *user);
 static Quat quat_from_axes(Vec3 X, Vec3 Y, Vec3 Z);
 
 /* ---- exhaust smoke and explosion flashes -------------------------------------------------------------------------
@@ -1794,7 +1900,7 @@ static Quat quat_from_axes(Vec3 X, Vec3 Y, Vec3 Z);
 typedef struct { Vec3 pos; float t, rot; } Puff;              /* 0x475380: one smoke cloud, 0.2 s, image 14 */
 typedef struct { Vec3 pos; float t, R; } Blast;               /* 0x4762e0: the nine flat quads of one flash, 0.3 s, image 12 */
 static Puff g_puffs[96]; static int g_puff_next; static Blast g_blasts[16];
-static void puff_add(Vec3 p) { Puff *q = &g_puffs[g_puff_next++ % 96]; q->pos = p; q->t = 1e-4f; q->rot = (float)msvc_rand(NULL) / 32767.0f; }
+static void puff_add(Vec3 p) { Puff *q = &g_puffs[g_puff_next++ % 96]; q->pos = p; q->t = 1e-4f; q->rot = crt_rnd(); }
 /* the particles of an explosion 0x477060 (docs/PARTICLES.md 5): kind 0 (bombs) = the dust burst 0x476cd0 and the smoke ring
  * 0x476140(pos, n, 0, 0.25, 1.5) next to its flash and ring (bombfx); kind 1 = the burning debris 0x476b50 and the dust burst
  * next to the two flashes 0x4762e0 (blast_add). Defined with the effect pool below. */
@@ -1882,7 +1988,7 @@ static void missile_exhaust(Missile *mi, float dt)
     for (int k = 0; k < mi->nmark; k++) {
         Vec3 m, d; if (!inst_vector_at(mi->inst, 9, (uint32_t)k, &m, &d)) break;
         float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); if (l > 1e-4f) { d.x /= l; d.y /= l; d.z /= l; }
-        float fl = 45.0f + (float)msvc_rand(NULL) / 32767.0f * 10.0f - 5.0f, off = fl * (0.8944272f - 0.015625f);   /* mode 0x13: cos(atan 0.5); 0x4abcf8 = 1/64 */
+        float fl = 45.0f + crt_rnd() * 10.0f - 5.0f, off = fl * (0.8944272f - 0.015625f);   /* mode 0x13: cos(atan 0.5); 0x4abcf8 = 1/64 */
         float fp[3] = { m.x + d.x * off, m.y + d.y * off, m.z + d.z * off };
         hud_world_fx(32, &m.x, 40.0f, 1.0f - mi->f1, white, 1.0f - 0.2f * sinf(3.14159265f * mi->f1));
         hud_world_fx(32, &m.x, 35.0f, 1.0f - mi->f2, white, 1.0f - 0.2f * sinf(3.14159265f * mi->f2));
@@ -2115,7 +2221,8 @@ static void bombs_draw(const float *eye, float dt)
         float f = b->fuse > 0 ? b->t / b->fuse : 1; if (f > 1) f = 1;
         float tip[3] = { v0.x + dv.x * (1 - f), v0.y + dv.y * (1 - f), v0.z + dv.z * (1 - f) };
         hud_world_line(&v0.x, tip, eye, 1.0f, g0, 1.0f, 0.4f);
-        hud_world_fx(18, tip, 5.0f + (float)msvc_rand(NULL) / 32767.0f * 10.0f, (float)msvc_rand(NULL) / 32767.0f, white, 0.7f);
+        { float sz = 5.0f + crt_rnd() * 10.0f, rot = crt_rnd();                   /* 0x478da8 size, then 0x478dc9 rotation (one statement each: C leaves argument order open) */
+          hud_world_fx(18, tip, sz, rot, white, 0.7f); }
     }
     for (int i = 0; i < 32; i++) {
         BombFx *x = &g_bombfx[i]; if (x->t <= 0) continue;
@@ -2438,9 +2545,9 @@ static void boss_fx_draw(float dt)
         Vec3 p, d; if (!inst_vector_at(g_bplume[e].link, 0, (uint32_t)g_bplume[e].n, &p, &d)) p = g_bplume[e].link->position;
         Vec3 D = { g_bplume[e].prev.x - p.x, g_bplume[e].prev.y - p.y, g_bplume[e].prev.z - p.z };
         for (int i = 0; i < k; i++) {
-            float f = (float)i / (float)k, jx = fx_rnd() * 30.0f, jz;
-            Vec3 q; q.x = f * D.x + jx + p.x - 15.0f; q.y = f * D.y + p.y; jz = fx_rnd() * 30.0f; q.z = f * D.z + jz + p.z - 15.0f;
-            int j = g_bsmoke_next++ % 1024; g_bsmoke[j].pos = q; g_bsmoke[j].t = 1e-6f; g_bsmoke[j].size = fx_rnd() * 10.0f; g_bsmoke[j].rot = fistp(fx_rnd() * 512.0f);
+            float f = (float)i / (float)k, jx = crt_rnd() * 30.0f, jz;
+            Vec3 q; q.x = f * D.x + jx + p.x - 15.0f; q.y = f * D.y + p.y; jz = crt_rnd() * 30.0f; q.z = f * D.z + jz + p.z - 15.0f;
+            int j = g_bsmoke_next++ % 1024; g_bsmoke[j].pos = q; g_bsmoke[j].t = 1e-6f; g_bsmoke[j].size = crt_rnd() * 10.0f; g_bsmoke[j].rot = fistp(crt_rnd() * 512.0f);
             if (i == k - 1) g_bplume[e].prev = q;
         }
     }
@@ -2456,7 +2563,8 @@ static void boss_fx_draw(float dt)
 static struct { Enemy *e; float age; int img; } g_stars[16];
 void game_enemy_stars(Enemy *e)
 {
-    for (int i = 0; i < 16; i++) if (!g_stars[i].e) { g_stars[i].e = e; g_stars[i].age = 0; g_stars[i].img = (rand() & 1) ? 11 : 10; return; }
+    int img = (crt_rand() & 1) ? 11 : 10;                                        /* 0x41b003: drawn before 0x477610 looks for a free slot */
+    for (int i = 0; i < 16; i++) if (!g_stars[i].e) { g_stars[i].e = e; g_stars[i].age = 0; g_stars[i].img = img; return; }
 }
 static void stars_draw(float dt)
 {
@@ -2545,7 +2653,6 @@ AmbFx *game_fx_amb_new(void)                                                 /* 
     FxRec *r = fx_new(1.0f, (Vec3){ 0, 0, 0 }, FX_AMB);
     return r ? &r->amb : NULL;
 }
-static float fx_rnd(void) { return (float)rand() / (float)RAND_MAX; }        /* 0x43ff40: rand() / 32767, so [0,1] inclusive */
 static void fx_rotmat(int a0, int a1, int a2, float M[9])                    /* 0x46d220; the angles are in 1/512 turn */
 {
     const float k = 6.2831853f / 512.0f;
@@ -2580,7 +2687,7 @@ void game_pickup_fx(int n, Vec3 pos)                                         /* 
 void game_splash(Vec3 c, float speed, float radius)
 {
     FxRec *e = fx_new(1.0f, c, 3); if (!e) return;
-    e->h = speed * 0.001f; e->acc = 0; e->acc2 = 0.2f; e->R = fx_rnd() * 50.0f + radius;   /* accK starts at 0.2: the first ring comes in the first frame */
+    e->h = speed * 0.001f; e->acc = 0; e->acc2 = 0.2f; e->R = crt_rnd() * 50.0f + radius;   /* accK starts at 0.2: the first ring comes in the first frame */
 }
 static float sin512(int i) { return sinf(6.2831853f * (i & 511) / 512.0f); }   /* -cos512[(i + 128) & 511] */
 static float cos512(int i) { return cosf(6.2831853f * (i & 511) / 512.0f); }
@@ -2596,10 +2703,10 @@ void game_hit_star(Vec3 pt)                                                  /* 
     Vec3 V = { n.y * U.z - n.z * U.y, n.z * U.x - n.x * U.z, n.x * U.y - n.y * U.x };
     for (int j = 0; j < 8; j++) {                                            /* 8 spokes 45 degrees apart, +-17.6 degrees */
         FxRec *s = fx_new(0.4f, pt, 11); if (!s) continue;
-        int a1 = (int)(fx_rnd() * 50.0f + 64 * j - 25), a2 = (int)(fx_rnd() * 50.0f + 64 * j - 25);
+        int a1 = (int)(crt_rnd() * 50.0f + 64 * j - 25), a2 = (int)(crt_rnd() * 50.0f + 64 * j - 25);
         Vec3 d = { U.x * cos512(a1) + V.x * sin512(a2), U.y * cos512(a1) + V.y * sin512(a2), U.z * cos512(a1) + V.z * sin512(a2) };
         l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); s->dir = l > 1e-5f ? (Vec3){ d.x / l, d.y / l, d.z / l } : U;
-        s->shape = fx_rnd() * 2.0f > 1.0f; s->R = fx_rnd() * 20.0f - 5.0f + 25.0f;   /* spin; size 20..40 (half diagonal) */
+        s->shape = crt_rnd() * 2.0f > 1.0f; s->R = crt_rnd() * 20.0f - 5.0f + 25.0f;   /* spin; size 20..40 (half diagonal) */
     }
 }
 /* message 1508 [inst] (0x46ceae, docs/PARTICLES.md 9): a torch. A 20-byte node {inst, n, timers, points, next} goes on the
@@ -2625,15 +2732,18 @@ static void torch_update(float dt)                                           /* 
             int n = (int)(*t * 15.0f); *t -= (float)n * 0.0666667f;           /* 15 flames a second (0x4a9864, 0x4abd8c) */
             while (n-- > 0) {
                 FxRec *f = fx_new(0, g_torch[i].p[k], FX_FLAME); if (!f) continue;
-                float dx = fx_rnd() * 20.0f - 10.0f, dz = fx_rnd() * 20.0f - 10.0f;   /* 0x47cfc3 */
+                float dx = crt_rnd() * 20.0f - 10.0f, dz = crt_rnd() * 20.0f - 10.0f;   /* 0x47cfc3 */
                 f->pos.x += dx; f->pos.z += dz;
                 float k2 = 1.0f - sqrtf(dx * dx + dz * dz) * 0.1f;           /* 1 at the centre, 0 at 10 out, down to -0.41 in the corners */
-                f->R = fx_rnd() * (fx_rnd() * k2 * 20.0f) + 40.0f;           /* +0x14: the size */
-                f->life = fx_rnd() * k2 * 0.5f + 2.5f;                        /* +4 */
+                float r1 = crt_rnd() * k2 * 20.0f;                            /* 0x47d02c, then 0x47d03f: the inner draw comes first */
+                f->R = crt_rnd() * r1 + 40.0f;                                /* +0x14: the size */
+                f->life = crt_rnd() * k2 * 0.5f + 2.5f;                        /* +4 */
             }
         }
     }
 }
+int game_soft_hazards(void) { return g_gp.soft; }                             /* Gameplay page (PORT EXTRA): lasers, lightning and blasts take a heart */
+float game_enemy_delay(void) { return g_gp.delay * 0.1f; }                  /* Gameplay page (PORT EXTRA): seconds before a noticing enemy attacks */
 int game_enemy_thinks(const Instance *inst)                                  /* Think 0x42b400 runs for the instances of this frame's list world+0x64 (rnd_instance_list) */
 {
     return !g_rnd || inst->listed;
@@ -2663,17 +2773,17 @@ static void fx_update(float dt, const float *eye)
                 if (u < 0.3f) {
                     int n = (int)(e->acc * 500.0f); e->acc -= n * 0.002f;
                     while (n-- > 0) {
-                        FxRec *d = fx_new((fx_rnd() + 1.0f) * 0.4f, e->pos, 4); if (!d) continue;
-                        int a = (int)(fx_rnd() * 511.0f); float c = cosf(6.2831853f * a / 512.0f), s = sin512(a);
-                        d->pos.x = (fx_rnd() * 20.0f + e->R) * c + e->pos.x;     /* separate jitter per axis, not purely radial */
-                        d->pos.z = (fx_rnd() * 20.0f + e->R) * s + e->pos.z;
+                        FxRec *d = fx_new((crt_rnd() + 1.0f) * 0.4f, e->pos, 4); if (!d) continue;
+                        int a = (int)(crt_rnd() * 511.0f); float c = cosf(6.2831853f * a / 512.0f), s = sin512(a);
+                        d->pos.x = (crt_rnd() * 20.0f + e->R) * c + e->pos.x;     /* separate jitter per axis, not purely radial */
+                        d->pos.z = (crt_rnd() * 20.0f + e->R) * s + e->pos.z;
                         d->dir = e->R > 0 ? (Vec3){ c, 0, s } : (Vec3){ 0, 0, 0 };
-                        fx_rnd(); fx_rnd();                                      /* +0x24, +0x20: never read */
-                        d->h = e->h; d->D = fx_rnd() * 100.0f + 150.0f;          /* 150..250 outward */
+                        crt_rnd(); crt_rnd();                                      /* +0x24, +0x20: never read */
+                        d->h = e->h; d->D = crt_rnd() * 100.0f + 150.0f;          /* 150..250 outward */
                     }
                 }
                 int n = (int)(e->acc2 * 5.0f); e->acc2 -= n * 0.2f;
-                while (n-- > 0) { FxRec *k = fx_new(0.7f, e->pos, 6); if (k) { k->R = e->R; fx_rnd(); } }   /* the rotation rnd*512 does nothing: the ring image is round */
+                while (n-- > 0) { FxRec *k = fx_new(0.7f, e->pos, 6); if (k) { k->R = e->R; crt_rnd(); } }   /* the rotation rnd*512 does nothing: the ring image is round */
             } else if (e->kind == 4) {                                       /* 0x477fa0: an additive streak, tail alpha 0, head 0.08 further on */
                 Vec3 a = drop_pt(e, u, u), b = drop_pt(e, u + 0.08f, u + 0.1f);
                 if (eye) hud_world_streak(57, &a.x, &b.x, eye, 4.0f, grey05, 0.0f, 0.65f);
@@ -2687,7 +2797,7 @@ static void fx_update(float dt, const float *eye)
                     int n = (int)(e->acc * 250.0f); e->acc -= n * 0.004f;
                     while (n-- > 0) {
                         FxRec *s = fx_new(0.5f, feet, 8); if (!s) continue;
-                        int a = (int)(fx_rnd() * 512.0f), b = (int)(fx_rnd() * 512.0f);
+                        int a = (int)(crt_rnd() * 512.0f), b = (int)(crt_rnd() * 512.0f);
                         s->dir = (Vec3){ 400.0f * cos512(a) * cos512(b), 400.0f * sin512(a), 400.0f * cos512(a) * sin512(b) };   /* a point on a sphere of 400 */
                     }
                 }
@@ -2731,7 +2841,7 @@ static void fx_update(float dt, const float *eye)
             } else {                                                         /* 0x4792d0: 50 sparks a second in a box over the bonus, each 0.2 s */
                 float acc = e->acc + dt; int n = (int)(acc * 50.0f); e->acc = acc - n * 0.02f;
                 while (n-- > 0) {
-                    Vec3 p = { e->pos.x + fx_rnd() * 60.0f - 30.0f, e->pos.y + (fx_rnd() + 1.0f) * 25.0f, e->pos.z + fx_rnd() * 60.0f - 30.0f };
+                    Vec3 p; p.x = e->pos.x + crt_rnd() * 60.0f - 30.0f; p.y = e->pos.y + (crt_rnd() + 1.0f) * 25.0f; p.z = e->pos.z + crt_rnd() * 60.0f - 30.0f;   /* x, y, z (0x47936a..0x479398) */
                     if (!fx_new(0.2f, p, 2)) break;
                 }
             }
@@ -2795,7 +2905,7 @@ void game_smoke_ring(Vec3 pos, Vec3 normal, int kind, float t0, float life)
         FxRec *r = fx_new(life, pos, FX_RING); if (!r) continue;
         float c = cos512(a), s = sin512(a), q = k_ring[kind].size * 0.25f;
         r->age = t0; r->dir = (Vec3){ X.x * c + Y.x * s, X.y * c + Y.y * s, X.z * c + Y.z * s };
-        r->size = fx_rnd() * q * 2.0f - q; r->rot = (i * 5000) & 511; r->shape = kind;
+        r->size = crt_rnd() * q * 2.0f - q; r->rot = (i * 5000) & 511; r->shape = kind;
     }
     if (wenv("WOODY_FXLOG")) printf("smoke ring kind %d (%d clouds) at %.0f %.0f %.0f", kind, (int)ceilf(n), pos.x, pos.y, pos.z), puts("");
 }
@@ -2857,7 +2967,7 @@ static void exhaust_glow_flames(Vec3 P0, Vec3 d, int size_idx, int mode_state, f
     hud_world_spr(32, p, sz, 512 - (int)(ph[0] * 512.0f), one, 1.0f - 0.2f * sin512((int)(ph[0] * 256.0f)), 7, NULL, 0);   /* camera facing */
     sz = mode_state == 1 ? s * C : mode_state == 3 ? 2 * C : C;
     hud_world_spr(32, p, sz, (int)(ph[1] * 512.0f), one, 1.0f - 0.2f * sin512((int)(ph[1] * 255.0f)), 6, nrm, 0);    /* across the trail */
-    float r = fx_rnd() * 10.0f - 5.0f; int mode = mode_state == 3 ? 0x12 : 0x13;
+    float r = crt_rnd() * 10.0f - 5.0f; int mode = mode_state == 3 ? 0x12 : 0x13;
     sz = (mode_state == 1 ? s * A : mode_state == 3 ? 1.3f * A : A) + r;     /* 0x4758b8: the ramp scales the table size, the +-5 comes on top */
     float half = sz * cos512(mode == 0x12 ? 64 : 37) - sz * 0.015625f;  /* [0x5e823c]+0x800[mode]: the flame starts at P0 and trails back along d */
     float q[3] = { P0.x + d.x * half, P0.y + d.y * half, P0.z + d.z * half };
@@ -2892,7 +3002,7 @@ static void board_fx_draw(float dt)
         for (int k = n - 1; k >= 0; k--) {                                   /* the puffs, spread from P0 + 45 d back towards the previous position */
             float f = (float)k / (float)n, dist = f * len + A;
             FxRec *pf = fx_new(0.2f, (Vec3){ P0.x + d.x * dist, P0.y + d.y * dist, P0.z + d.z * dist }, FX_BOARD_PUFF); if (!pf) continue;
-            pf->age = k * dt / n; pf->rot = (int)(fx_rnd() * 512.0f);
+            pf->age = k * dt / n; pf->rot = (int)(crt_rnd() * 512.0f);
             e->prev[i] = e->size_idx == 9 || e->size_idx == 6 ? (Vec3){ P0.x + D.x, P0.y + D.y, P0.z + D.z } : pf->pos;   /* 0x475c2c */
         }
     }
@@ -2914,11 +3024,11 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; int n = (int)(e->acc * 50.0f); e->acc -= n * 0.02f;
         while (n-- > 0) {
             FxRec *p = fx_new(0.8f, e->pos, FX_STEP_PUFF); if (!p) continue;
-            p->age = fx_rnd() * 0.2f;
-            float s = e->foot == 0 ? fx_rnd() * 15.0f + 5.0f : -5.0f - fx_rnd() * 15.0f;
+            p->age = crt_rnd() * 0.2f;
+            float s = e->foot == 0 ? crt_rnd() * 15.0f + 5.0f : -5.0f - crt_rnd() * 15.0f;
             p->pos = (Vec3){ e->pos.x + A.x * s, e->pos.y + A.y * s, e->pos.z + A.z * s };
             p->dir = (Vec3){ -e->dir.x, -e->dir.y, -e->dir.z };             /* they drift back where he came from */
-            p->rot = (int)(fx_rnd() * 512.0f);
+            p->rot = (int)(crt_rnd() * 512.0f);
         }
         break; }
     case FX_STEP_PUFF: {                                                     /* 0x47e370: 100 back and 30 up over 0.8 s, faint and additive */
@@ -2941,26 +3051,26 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; e->acc2 += dt; e->acc3 += dt;
         int n = (int)(e->acc * 33.0f); e->acc -= n * 0.030303f;
         while (n-- > 0) {
-            FxRec *c = fx_new((fx_rnd() + 1.0f) * 0.3f, e->pos, FX_PECK_CHIP); if (!c) continue;
-            int a = (int)(fx_rnd() * 511.0f);
+            FxRec *c = fx_new((crt_rnd() + 1.0f) * 0.3f, e->pos, FX_PECK_CHIP); if (!c) continue;
+            int a = (int)(crt_rnd() * 511.0f);
             c->pos = (Vec3){ e->pos.x + cos512(a) * 10.0f, e->pos.y, e->pos.z + sin512(a) * 10.0f };
             c->dir = (Vec3){ cos512(a), 0, sin512(a) };                      /* level and outward, whatever the wall */
-            c->rot = (int)(fx_rnd() * 511.0f);
+            c->rot = (int)(crt_rnd() * 511.0f);
         }
         n = (int)(e->acc2 * 50.0f); e->acc2 -= n * 0.02f;
         while (n-- > 0) fx_new(0.05f, e->pos, FX_PECK_FLASH);
         n = (int)(e->acc3 * 8.0f); e->acc3 -= n * 0.125f;                    /* 0.2 s at 8 a second: one hole per peck */
         while (n-- > 0) {
-            float hold = fx_rnd() * 0.3f + 5.0f, v = fx_rnd() * 20.0f - 10.0f; Vec3 U = fx_plane_u(e->n);
+            float hold = crt_rnd() * 0.3f + 5.0f, v = crt_rnd() * 20.0f - 10.0f; Vec3 U = fx_plane_u(e->n);
             FxRec *h = fx_new(hold + 4.0f, (Vec3){ e->pos.x + U.x * v, e->pos.y + U.y * v, e->pos.z + U.z * v }, FX_PECK_HOLE); if (!h) continue;
-            h->D = hold; h->n = e->n; h->rot = (int)(fx_rnd() * 511.0f);
+            h->D = hold; h->n = e->n; h->rot = (int)(crt_rnd() * 511.0f);
         }
         break; }
     case FX_PECK_CHIP: {                                                     /* 0x479670: a splinter on an arc 80 out and 100 high */
         float pos[3] = { e->pos.x + u * e->dir.x * 80.0f, e->pos.y + sin512((int)(u * 255.0f)) * 100.0f, e->pos.z + u * e->dir.z * 80.0f };
         /* the original never sets the rotation here and draws with whatever S+0x224 the previous sprite left; the port
          * takes the chip's own rolled angle (+0x20) */
-        hud_world_spr(25, pos, fx_rnd() * 5.0f + 10.0f, e->rot, one, 1.0f, 0xf, NULL, 0);
+        hud_world_spr(25, pos, crt_rnd() * 5.0f + 10.0f, e->rot, one, 1.0f, 0xf, NULL, 0);
         break; }
     case FX_PECK_FLASH:                                                      /* 0x479760 */
         hud_world_spr(18, &e->pos.x, 80.0f, 0, one, 0.8f, 3, NULL, 0);
@@ -2976,10 +3086,10 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; int n = (int)(e->acc * 400.0f); e->acc -= n * 0.0025f;
         while (n-- > 0) {
             FxRec *d = fx_new(0.7f, e->pos, FX_DEBRIS); if (!d) continue;
-            d->size = fx_rnd() * 50.0f + 80.0f;
-            d->foot = (int)(fx_rnd() * 2.0f) != 0 ? 16 : 17;                 /* the image */
-            d->rot = (int)(fx_rnd() * 511.0f);
-            int a = (int)(fx_rnd() * 255.0f), b = (int)(fx_rnd() * 511.0f); float r = fx_rnd() * 150.0f + 20.0f;
+            d->size = crt_rnd() * 50.0f + 80.0f;
+            d->foot = (int)(crt_rnd() * 2.0f) != 0 ? 16 : 17;                 /* the image */
+            d->rot = (int)(crt_rnd() * 511.0f);
+            int a = (int)(crt_rnd() * 255.0f), b = (int)(crt_rnd() * 511.0f); float r = crt_rnd() * 150.0f + 20.0f;
             if (u < 0.8f) { d->D = 600.0f; d->dir = (Vec3){ cos512(a), sin512(a), cos512(a) * sin512(b) }; }   /* the upper half, not normalised */
             else { d->D = 40.0f; d->dir = (Vec3){ 0, 1, 0 }; }             /* the last fifth only rises */
             d->pos = (Vec3){ e->pos.x + cos512(a) * r, e->pos.y + sin512(a) * r, e->pos.z + cos512(a) * sin512(b) * r };
@@ -2994,7 +3104,7 @@ static void fx_particle(FxRec *e, float u, float dt)
         e->acc += dt; int n = (int)(e->acc * 60.0f); e->acc -= n * 0.0166667f;
         while (n-- > 0) {
             FxRec *b = fx_new(2.0f, e->pos, FX_BURN); if (!b) continue;
-            Vec3 d = { fx_rnd() * 2.0f - 1.0f, 0, 0 }; d.y = fx_rnd() * 2.0f - 0.5f; d.z = fx_rnd() * 2.0f - 1.0f;
+            Vec3 d = { crt_rnd() * 2.0f - 1.0f, 0, 0 }; d.y = crt_rnd() * 2.0f - 0.5f; d.z = crt_rnd() * 2.0f - 1.0f;
             float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); if (l > 0) { d.x /= l; d.y /= l; d.z /= l; }
             b->dir = d; b->pos = (Vec3){ e->pos.x + d.x * 300.0f, e->pos.y + d.y * 300.0f, e->pos.z + d.z * 300.0f };
         }
@@ -3006,9 +3116,9 @@ static void fx_particle(FxRec *e, float u, float dt)
                 e->h += 0.025f;
                 Vec3 p = { e->pos.x + e->dir.x * e->h * 1200.0f, e->pos.y + e->dir.y * e->h * 1200.0f, e->pos.z + e->dir.z * e->h * 1200.0f };
                 FxRec *k = fx_new(0.2f, p, FX_TRAIL_SMOKE);
-                if (k) { k->size = fx_rnd() * 20.0f + 40.0f; k->R = 0.3f; k->rot = (int)(fx_rnd() * 512.0f); }
+                if (k) { k->size = crt_rnd() * 20.0f + 40.0f; k->R = 0.3f; k->rot = (int)(crt_rnd() * 512.0f); }
                 k = fx_new(0.15f, p, FX_TRAIL_SPARK);
-                if (k) { k->size = fx_rnd() * 20.0f + 60.0f; k->R = 1.0f; k->rot = (int)(fx_rnd() * 512.0f); }
+                if (k) { k->size = crt_rnd() * 20.0f + 60.0f; k->R = 1.0f; k->rot = (int)(crt_rnd() * 512.0f); }
                 if (e->h >= 0.1f) {                                          /* the next leg starts at the end of this one */
                     e->pos.x += e->dir.x * 120.0f; e->pos.y += e->dir.y * 120.0f; e->pos.z += e->dir.z * 120.0f;
                     e->dir.y -= 0.2f; float l = sqrtf(e->dir.x * e->dir.x + e->dir.y * e->dir.y + e->dir.z * e->dir.z);
@@ -3043,7 +3153,7 @@ static void fx_particle(FxRec *e, float u, float dt)
             Vec3 P = pl->pos, d = { g_fx_eye.x - P.x, g_fx_eye.y - P.y, g_fx_eye.z - P.z }, X, Y;   /* towards the camera, 3D */
             float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z); if (l > 0) { d.x /= l; d.y /= l; d.z /= l; }
             fx_axes(d, &X, &Y);
-            float jit = fx_rnd() * 20.0f - 10.0f;                            /* one per frame for all six glows */
+            float jit = crt_rnd() * 20.0f - 10.0f;                            /* one per frame for all six glows */
             int row = ph == 1 ? 12 : 0, head = ph == 1 ? 40 : 472;           /* A: head tilted 40/512 one way, B: the other */
             for (int i = 0; i < 6; i++) {
                 const float *o = off[row + i];
@@ -3056,11 +3166,12 @@ static void fx_particle(FxRec *e, float u, float dt)
         /* 0x477d9d..0x477dc6: 0x498790(kind 0, S+0x208, white, rnd * 100 + 200) every frame, never drawn by the original (LIGHTING.md 7).
          * S+0x208 is the position of the shared sprite object, so in a skeleton phase the last bone's glow (the right leg) and
          * in a model phase whatever effect drew a sprite last - this frame or an earlier one */
-        { float lp[3]; hud_last_sprite_pos(lp); rnd_light_add(0, (Vec3){ lp[0], lp[1], lp[2] }, white255, fx_rnd() * 100.0f + 200.0f); }
+        { float lp[3]; hud_last_sprite_pos(lp); rnd_light_add(0, (Vec3){ lp[0], lp[1], lp[2] }, white255, crt_rnd() * 100.0f + 200.0f); }
         break; }
     case FX_FLAME: {                                                         /* 0x47cd00: rises 40 a second, shrinks to nothing, white -> red, additive */
         e->pos.y += dt * 40.0f;                                              /* +0xc += dt * 0x4ab294 */
-        float pos[3] = { e->pos.x + fx_rnd() * u, e->pos.y, e->pos.z + fx_rnd() * u }, rgb[3] = { 0.5f, 0.5f - u * 0.5f, 0.5f - u * 0.5f };
+        float pos[3], rgb[3] = { 0.5f, 0.5f - u * 0.5f, 0.5f - u * 0.5f };
+        pos[0] = e->pos.x + crt_rnd() * u; pos[1] = e->pos.y; pos[2] = e->pos.z + crt_rnd() * u;   /* x (0x47cd4b), then z (0x47cd66) */
         hud_world_spr(12, pos, (1.0f - u) * e->R, 0, rgb, 1.0f, 3, NULL, 0);  /* image 0x1000c, mode 0x12, flags 3: camera facing, own colour */
         break; }
     }
@@ -3087,10 +3198,10 @@ static void fireball_draw(Shot *s, float dt)
     if (n > 32) n = 32;
     for (int k = 0; k < n; k++) {
         float f = (float)k / n; Spark *p = &g_sparks[g_spark_next++ % 256];
-        p->pos.x = s->pos.x - f * s->dir.x * dist + (float)msvc_rand(NULL) / 32767.0f * 20.0f - 10.0f;
-        p->pos.y = s->pos.y - f * s->dir.y * dist + (float)msvc_rand(NULL) / 32767.0f * 20.0f - 10.0f;
-        p->pos.z = s->pos.z - f * s->dir.z * dist + (float)msvc_rand(NULL) / 32767.0f * 20.0f - 10.0f;
-        p->rot = (float)(int)((float)msvc_rand(NULL) / 32767.0f * 512.0f) / 512.0f; p->t = 1e-4f;
+        p->pos.x = s->pos.x - f * s->dir.x * dist + crt_rnd() * 20.0f - 10.0f;
+        p->pos.y = s->pos.y - f * s->dir.y * dist + crt_rnd() * 20.0f - 10.0f;
+        p->pos.z = s->pos.z - f * s->dir.z * dist + crt_rnd() * 20.0f - 10.0f;
+        p->rot = (float)(int)(crt_rnd() * 512.0f) / 512.0f; p->t = 1e-4f;
     }
     s->fb_prev = s->pos;
 }
@@ -3264,7 +3375,7 @@ static void rockets_draw(float dt)
             FxRec *pf = fx_new(0.2f, (Vec3){ m.x + t.x * dist, m.y + t.y * dist, m.z + t.z * dist }, FX_BOARD_PUFF); if (!pf) continue;
             pf->age = k * dt / n;                                                /* 0x475bbf */
             r->prev_p1 = (Vec3){ m.x + d.x, m.y + d.y, m.z + d.z };              /* 0x475c58 */
-            pf->rot = (int)(fx_rnd() * 512.0f);                                  /* 0x475c79 */
+            pf->rot = (int)(crt_rnd() * 512.0f);                                  /* 0x475c79 */
         }
     }
 }
@@ -3349,7 +3460,7 @@ static void anim_sounds(Instance *ii)
             memcpy(&t, &e[1], 4); memcpy(&lo, &e[3], 4); memcpy(&hi, &e[4], 4); memcpy(&vol, &e[5], 4); memcpy(&pitch, &e[6], 4); memcpy(&dmin, &e[7], 4);
             int hit = tf > t0 ? (t >= t0 && t < tf) : (t >= t0 || t < tf);
             if (hit) {
-                if (r < 0) { r = (float)msvc_rand(NULL) / 32767.0f * 100.0f - 1.0f; if (r < 0) r = 0; }
+                if (r < 0) { r = crt_rnd() * 100.0f - 1.0f; if (r < 0) r = 0; }
                 if (r >= lo && r < hi) {
                     int perso = g_player && g_player->inst == ii;
                     audio_play(e[2], ii, 0, vol, (float)pitch * 0.01f, perso ? NULL : &ii->position.x, dmin * 0.01f, 0);
@@ -3637,8 +3748,6 @@ static void on_msg(EkoVM *vm, const EkoMsg *m, void *user)
     }
 }
 static void on_warn(EkoVM *vm, const char *s, void *user) { (void)vm; (void)user; printf("VM warning: %s\n", s); }
-static uint32_t g_seed = 1;
-static uint32_t msvc_rand(void *user) { (void)user; g_seed = g_seed * 214013u + 2531011u; return (g_seed >> 16) & 0x7fff; }
 
 /* one loaded level: everything that is torn down and rebuilt on a level change (the window and GL context stay) */
 typedef struct {
@@ -3669,12 +3778,15 @@ static int level_load(Level *L, const char *dir, const char *lvl)
     snprintf(path, sizeof path, "%s/%s/code", dir, lvl);
     size_t codesz; L->code = read_all(path, &codesz);
     if (!L->code || eko_load(&L->vm, L->code, codesz)) { fprintf(stderr, "cannot load %s\n", path); free(L->code); ins_free(&g_ins); gel_free(&L->gel); tex_free(&L->tex); return -1; }
-    L->vm.on_msg = on_msg; L->vm.on_warn = on_warn; L->vm.rand_fn = msvc_rand; g_vm = &L->vm;
+    L->vm.on_msg = on_msg; L->vm.on_warn = on_warn; g_vm = &L->vm;   /* RANDOM 0x443c74 draws from crt_rand(), the one stream */
     printf("%s: %u polys, %u verts, %u textures, %u models, %u slots, %u script objects\n", lvl, L->gel.npolys, L->gel.nverts, L->tex.ngroups, g_ins.nmodels, g_ins.nslots, L->vm.nobj);
     snprintf(path, sizeof path, "%s/%s/%s.lit", dir, lvl, lvl); L->have_lit = lit_load(&L->lit, path) == 0;
     snprintf(path, sizeof path, "%s/%s/%s.vis", dir, lvl, lvl); L->have_vis = vis_load(&L->vis, path, L->gel.nsectors) == 0;   /* 0x408260: what each sector can see */
     if (wenv("WOODY_CELLLOG")) printf("  gel: %u cells, %u sectors, %u kd nodes | lit: %u lights, %u sector light lists\n", L->gel.ncells, L->gel.nsectors, L->gel.nkd, L->lit.nlights, L->lit.nsectors);
     rnd_init(&L->rnd, &L->tex, &L->gel, &g_ins, L->have_lit ? &L->lit : NULL, L->have_vis ? &L->vis : NULL);
+    for (int i = 0; i < 50 * 6; i++) crt_rand();       /* 0x40456e -> 0x4367f0: [0x4b3200] = 50 records of six rand() / 32767 floats into [0x54ba28],
+                                                        * which nothing reads (only Unload frees it), at every level load before the script init:
+                                                        * they only move the stream on (docs/RANDOM.md) */
     water_reset(&L->tex); L->rnd.post_models = water_draw;   /* class 60 (water.c) */
     L->rnd.spr_count = hud_wq_count; L->rnd.spr_quad = hud_wq_quad; L->rnd.spr_draw = hud_wq_draw; L->rnd.spr_done = hud_wq_done;   /* the world sprites (hud.c) */
     L->rnd.on_drawn = storm_rod_drawn;                       /* class 80 vt[26] 0x452010: the rod colour, per drawn rod (storm.c) */
@@ -3775,7 +3887,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e)
 #endif
     return EXCEPTION_CONTINUE_SEARCH;
 }
-#elif !defined __ANDROID__                                        /* Android keeps its own handlers (the tombstone in logcat) */
+#elif !defined __ANDROID__ && !defined __SWITCH__                 /* Android keeps its own handlers (the tombstone in logcat) */
 #include <signal.h>
 static void crash_signal(int sig) { printf("crash: signal %d\n", sig); fflush(stdout); signal(sig, SIG_DFL); raise(sig); }
 #endif
@@ -3784,7 +3896,7 @@ int main(int argc, char **argv)
 {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crash_filter);
-#elif !defined __ANDROID__
+#elif !defined __ANDROID__ && !defined __SWITCH__
     signal(SIGSEGV, crash_signal); signal(SIGBUS, crash_signal); signal(SIGFPE, crash_signal); signal(SIGILL, crash_signal); signal(SIGABRT, crash_signal);
 #endif
     if (wenv("WOODY_UNBUF")) setvbuf(stdout, NULL, _IONBF, 0);                  /* debugging a crash: every line reaches the log */
@@ -3797,7 +3909,10 @@ int main(int argc, char **argv)
 #ifdef WOODY_GUI
     if (!wenv("WOODY_CONSOLE")) freopen("woodyre.log", "w", stdout);              /* the windowed release build: the log beside woodyre.cfg */
 #endif
-    int verify = 0, dump_all = 0;                                                              /* --verify: check the data against the supported CDs and quit */
+#if defined WOODY_GUI || !defined _WIN32
+    g_log_msgs = wenv("WOODY_TRACE") != NULL;                                     /* release builds: the per-message trace (SEND, player t=) only on request, hours of play made a 100 MB log */
+#endif
+    int verify = 0, dump_all = 0;                                                 /* --verify: check the data against the supported CDs and quit */
     const char *shot_path = NULL; double shot_after = 0;                          /* --shot file.ppm seconds: screenshot then quit */
     int have_cam = 0; float cam_args[5] = {0, 0, 0, 0, 0};                          /* --cam x y z yaw pitch (degrees) */
     double jump_at = -1; float max_y = -1e30f, start_y = 0;                       /* --jump T: hold jump from T s for 1 s (testing), reports the apex */
@@ -3808,6 +3923,7 @@ int main(int argc, char **argv)
     double enter_at = -1;                                                         /* --enter T: press Enter on the title after T s (testing) */
     int pick_type = 0, pre_bonus = -1; float pre_health = -1; double pick_at = 0;   /* --pickup TYPE T, --bonus N, --health N (testing) */
     int door_inst = -1, door_act = 17; double door_at = -1;                        /* --door INST ACT T (testing) */
+    int all_done = 0;
     int new_game = 0, logo = -1; const char *next_name = NULL; double next_at = 0;   /* --nologo / --logo: the logo films off / on even for a scripted run */                              /* --next LVL T: change to level LVL after T s (testing) */
     double walk_for = 0, walk_at = wenv("WOODY_WALKAT") ? atof(wenv("WOODY_WALKAT")) : 0; int fly = 0;                                             /* --walk T: hold forward for T s (testing); --fly: start in free camera */
     int res_w = 0, res_h = 0, full_arg = -1, wide_arg = -1;                          /* --res WxH, --windowed / --fullscreen, --aspect 4:3|wide (port extras) */
@@ -3829,6 +3945,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--health") && i + 1 < argc) { pre_health = (float)atof(argv[i + 1]); i += 1; }                        /* --health N: hearts before the pickup (testing) */
         else if (!strcmp(argv[i], "--yaw") && i + 1 < argc) { have_yaw = 1; yaw_arg = (float)atof(argv[i + 1]) * 3.14159265f / 180; i += 1; }   /* with --pos: facing in degrees */
         else if (!strcmp(argv[i], "--unlock")) g_unlock_all = 1;                       /* every level door open */
+        else if (!strcmp(argv[i], "--alldone")) all_done = 1;                          /* every level finished: the hubs' final fights (testing) */
         else if (!strcmp(argv[i], "--newgame")) new_game = 1;                          /* ignore woodyre.sav */
         else if (!strcmp(argv[i], "--nologo")) logo = 0;
         else if (!strcmp(argv[i], "--logo")) logo = 1;
@@ -3860,15 +3977,20 @@ int main(int argc, char **argv)
     setup_import(dir);                                                                 /* the Setup keys woodyre.cfg lacks: from Woody.cfg (docs/SETUP.md) */
     {   /* the display that runs: the cfg's, but a screenshot run keeps the fixed default (1280x800 window, wide, vsync) whatever the
          * cfg says; the command line and WOODY_VSYNC / WOODY_FPSCAP override both */
-        static const Display def = { 1, 1280, 800, 0, 1, 0 };
+        static const Display def = { 1, 1280, 800, 0, 1, 0, 0, 1, 0, 0 };
         g_dnow = shot_path || wenv("WOODY_SHOTSEQ") || wenv("WOODY_LOGOSHOT") ? def : g_disp;
         if (res_w) { g_dnow.w = res_w; g_dnow.h = res_h; }
         if (full_arg >= 0) g_dnow.full = full_arg;
         if (wide_arg >= 0) g_dnow.wide = wide_arg;
         if (wenv("WOODY_VSYNC")) g_dnow.vsync = atoi(wenv("WOODY_VSYNC")) != 0;
         if (wenv("WOODY_FPSCAP")) g_dnow.cap = atoi(wenv("WOODY_FPSCAP")) < 0 ? 0 : atoi(wenv("WOODY_FPSCAP"));
+        if (wenv("WOODY_AO")) g_dnow.ao = atoi(wenv("WOODY_AO")) != 0;
+        if (wenv("WOODY_ANISO")) g_dnow.aniso = atoi(wenv("WOODY_ANISO")) < 1 ? 1 : atoi(wenv("WOODY_ANISO"));
+        if (wenv("WOODY_SMAA")) g_dnow.smaa = atoi(wenv("WOODY_SMAA")) < 0 ? 0 : atoi(wenv("WOODY_SMAA")) > 4 ? 4 : atoi(wenv("WOODY_SMAA"));
+        if (wenv("WOODY_MSAA")) g_dnow.msaa = atoi(wenv("WOODY_MSAA")) < 2 ? 0 : atoi(wenv("WOODY_MSAA"));
     }
     Window win; if (win_open(&win, "WoodyRE", 1280, 800)) return 1;
+    gfx_apply();
     if (g_dnow.full || g_dnow.w != 1280 || g_dnow.h != 800) disp_apply(&win);
     else { win_vsync(g_dnow.vsync); if (g_dnow.cap > 0) timeBeginPeriod(1); }
     if (g_stats.have) g_stats.level = g_prev_level;                                    /* --stats belongs to the level --prev says we came from */
@@ -3878,6 +4000,7 @@ int main(int argc, char **argv)
         for (int i = 0; i < 4 && s < 0; i++) if (slot_pct(&g_file.slot[i])) s = i;
         if (s >= 0 && s < 4) g_save = g_file.slot[s];
     }
+    if (all_done) for (int l = 2; l < 25; l++) if (l != 11 && l != 18) g_save.chr[char_of_level(l)].rec[l].done = 1;
     if (!wenv("WOODY_NOSOUND") && !audio_init()) { char bf[512]; snprintf(bf, sizeof bf, "%s/../Music.bf", dir); printf("Music.bf: %d files\n", audio_bf_open(bf)); }
     opt_apply();                                                                       /* 0x4691e2: the volumes from the cfg at sound start */
     audio_reverse_stereo(wenv("WOODY_REVSTEREO") ? atoi(wenv("WOODY_REVSTEREO")) != 0 : g_setup.rev);   /* 0x4691f4: [0x5e81c0] = cfg +0x74 */
@@ -3924,7 +4047,7 @@ int main(int argc, char **argv)
         }
         { static double cap = -1; if (cap < 0) cap = wenv("WOODY_FPS") ? atof(wenv("WOODY_FPS")) : 0;   /* WOODY_FPS=N: testing, frame-rate dependent code at N fps */
           if (cap > 0) while (win_time() - last < 1.0 / cap) Sleep(0);
-          else if (g_dnow.cap > 0) { double due = last + 1.0 / g_dnow.cap, tn; while ((tn = win_time()) < due) if (due - tn > 0.002) Sleep(1); } }   /* port extra: the frame cap of the Display page / WOODY_FPSCAP (the original has none) */
+          else if (g_dnow.cap > 0 && !g_skip) { double due = last + 1.0 / g_dnow.cap, tn; while ((tn = win_time()) < due) if (due - tn > 0.002) Sleep(1); } }   /* port extra: the frame cap of the Display page / WOODY_FPSCAP (the original has none) */
         if (win.keys[VK_F11] && !f11_prev) { g_dnow.full ^= 1; g_disp_dirty = 1; }   /* port extra: F11 = fullscreen / window for this run (the Display page saves it) */
         f11_prev = win.keys[VK_F11];
         if (g_disp_dirty) disp_apply(&win);
@@ -3932,6 +4055,7 @@ int main(int argc, char **argv)
         if (dt > 0.1f) dt = 0.1f;
         static double fixdt = -1; if (fixdt < 0) fixdt = wenv("WOODY_FIXDT") ? atof(wenv("WOODY_FIXDT")) : 0;   /* WOODY_FIXDT=N: testing, every frame advances 1/N s whatever */
         if (fixdt > 0) dt = (float)(1.0 / fixdt);                                       /* the wall clock says, so --shot frames repeat exactly (before/after diffs) */
+        if (g_skip) dt = 0.1f;                                                          /* a cutscene fast-forwards (Gameplay page) */
         audio_offline_advance(dt);                     /* no-op unless WOODY_AUDIODUMP + WOODY_FIXDT (video capture) */
         g_clock += dt; g_now = (float)g_clock; g_dt = dt;   /* 0x401880: everything (Perso timers, animations, the script VM) runs on this one clock, so a hitch cannot make script delays
                                                         * run ahead of the action timers - a door would then teleport while action 17 is still running and 0x44a650 refuses the move */
@@ -3976,6 +4100,16 @@ int main(int argc, char **argv)
             #undef REL
             for (int k = 0; k < 256; k++) key_prev[k] = win.keys[k];
         }
+        /* PORT EXTRA (Gameplay page, skip cutscenes): the pause key during a cutscene fast-forwards it - every frame advances the
+         * largest step the clock takes anyway (0.1 s), behind a black picture and without sound, until the scene hands back to the
+         * player. The scripts time their events on the game clock (DELAYs, CINEMATIC.md 7), so they all still happen in order.
+         * A cutscene = a cinematic (1130) or a letterboxed script camera (520, mode 4: the player frozen, CAMERA_SCRIPT.md 3),
+         * which most of the game's scenes are (hub area gates, switch and door shots); not the free shots of 510 (mode 2). */
+        int cutscene = cin_running() || g_cam.mode == 4;
+        if (g_gp.skip && !g_skip && g_level != 0 && M.page < 0 && cutscene && !g_res.on && (mk.esc_prs || mk.ok || (wenv("WOODY_SKIPAT") && g_now >= atof(wenv("WOODY_SKIPAT"))))) {   /* the pause key or confirm (Enter, the jump key / pad A) */
+            g_skip = 1; audio_rtc(-1); audio_master(0, g_opt.music * 0.01f); win_vsync(0); printf("  CUTSCENE skipped at %.2f s (%s)", g_now, cin_running() ? "cinematic" : "script camera"), puts(""); mk.esc_prs = mk.ok = 0; }
+        if (g_skip && !cutscene) { g_skip = 0; opt_apply(); win_vsync(g_dnow.vsync); printf("  CUTSCENE over at %.2f s", g_now), puts(""); }
+        if (g_skip) g_black_frame = 1;
         if (DBGKEY(VK_TAB) && !tab_prev && sel) {                                   /* next instance with animations */
             Instance *nxt = NULL; int found = 0;
             for (uint32_t mi = 0; mi < g_ins.nmodels && !nxt; mi++) for (uint32_t k = 0; k < g_ins.models[mi].ninstances; k++) {
@@ -4162,6 +4296,7 @@ int main(int argc, char **argv)
         { Vec3 cr = cam_right(&cam); audio_listener(&cam.pos.x, &cr.x); audio_pause(bb_active() ? dbg_paused || M.page >= 0 : paused); }   /* the listener is the camera (mgr+0x28); the SoundFx queue runs in BlackBox mode (0x401eb1: app+0xe4) */
         int vx, vy, vw, vh; disp_view(&win, &vx, &vy, &vw, &vh);                     /* port extra (docs/DISPLAY.md 3): the 3D view box, 4:3 or the whole window */
         Window view = win; view.vx = vx; view.vy = vy; view.width = vw; view.height = vh;
+        postfx_begin(win.width, win.height);                                        /* port extra (postfx.c): MSAA / SMAA draw the 3D picture into an own target */
         rnd_frame(&L.rnd, &view, &cam, g_now);                 /* the same game clock as the instances: a texture override (message 16) starts on it */
         audio_update(snd_owner_active);                                             /* 0x401ee7: after the draw, with this frame's instance list */
         {   /* 2D layer (docs/HUD_TEXT.md 5.4): HUD, then the text box, then the fades. No HUD in menus, BlackBox, cinematics and the fall death camera (0x401e19) */
@@ -4217,6 +4352,7 @@ int main(int argc, char **argv)
                 hud_world_sprites_end();
                 rnd_sorted(&L.rnd);                                           /* 0x428d00: fade list, glow faces and these sprites in depth buckets (docs/MODEL_RENDER.md 10) */
             }
+            postfx_end();                                                /* the 3D picture into the window (resolved, smoothed); the 2D layer stays sharp */
             if (g_black_frame || (g_sfade.hold && !(g_sfade.rest > 0))) { rnd_fade(0); g_black_frame = 0; }                /* 1152 blanks the 3D picture only: the House intro shows its text on black */
             if (L.have_player && now - t0 >= pick_at - 0.5) {            /* set the counters a few frames early, so the HUD sees them change like it would in play */
                 if (pre_bonus >= 0) { L.player.bonus_count = pre_bonus; pre_bonus = -1; }
@@ -4359,7 +4495,10 @@ int main(int argc, char **argv)
             lvl = L.name; continue;
         }
         if (now - fps_t > 2.0 && wenv("WOODY_FPSLOG")) printf("fps %.1f\n", frames / (now - fps_t));   /* testing: the frame cap / vsync */
-        if (now - fps_t > 2.0) { char title[256]; snprintf(title, sizeof title, "WoodyRE%s - %s - %.0f fps - VM t=%d frame %u msgs %u - %s - woody %.0f %.0f %.0f %s - vol events %u - hearts %.0f lives %d bonus %d/%d", g_level == 0 ? " - TITLE: Enter = new game, L = continue" : "", lvl, frames / (now - fps_t), L.vm.time, L.vm.frame, L.vm.stat_msgs_total, fly ? "fly" : "play", L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.on_ground ? "ground" : "air", L.player.events_sent, L.player.health, L.player.lives, L.player.bonus_got, L.player.bonus_total); if (WOODY_DEBUG_TITLE) win_title(&win, title); if (L.have_player) printf("player t=%.1f pos %.0f %.0f %.0f vel %.0f %.0f %.0f %s floor %.0f cam %.0f %.0f %.0f\n", now - t0, L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.vel.x, L.player.vel.y, L.player.vel.z, L.player.on_ground ? (L.player.floor_is_hull ? "hull" : "ground") : "air", L.player.floor_y, cam.pos.x, cam.pos.y, cam.pos.z); frames = 0; fps_t = now; }
+#ifdef WOODY_GUI
+        if (now - fps_t > 2.0 && !wenv("WOODY_CONSOLE") && ftell(stdout) > WOODY_LOG_MAX) { freopen("woodyre.log", "w", stdout); printf("log: woodyre.log passed %d MB and starts again\n", (int)(WOODY_LOG_MAX >> 20)); }   /* a bound for whatever still prints a lot */
+#endif
+        if (now - fps_t > 2.0) { char title[256]; snprintf(title, sizeof title, "WoodyRE%s - %s - %.0f fps - VM t=%d frame %u msgs %u - %s - woody %.0f %.0f %.0f %s - vol events %u - hearts %.0f lives %d bonus %d/%d", g_level == 0 ? " - TITLE: Enter = new game, L = continue" : "", lvl, frames / (now - fps_t), L.vm.time, L.vm.frame, L.vm.stat_msgs_total, fly ? "fly" : "play", L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.on_ground ? "ground" : "air", L.player.events_sent, L.player.health, L.player.lives, L.player.bonus_got, L.player.bonus_total); if (WOODY_DEBUG_TITLE) win_title(&win, title); if (L.have_player && g_log_msgs) printf("player t=%.1f pos %.0f %.0f %.0f vel %.0f %.0f %.0f %s floor %.0f cam %.0f %.0f %.0f\n", now - t0, L.player.pos.x, L.player.pos.y, L.player.pos.z, L.player.vel.x, L.player.vel.y, L.player.vel.z, L.player.on_ground ? (L.player.floor_is_hull ? "hull" : "ground") : "air", L.player.floor_y, cam.pos.x, cam.pos.y, cam.pos.z); frames = 0; fps_t = now; }
     }
     opt_write(); level_free(&L); audio_shutdown(); win_close(&win);   /* 0x401130: the cfg is written back at exit */
     return 0;
