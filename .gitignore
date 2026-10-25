@@ -10,6 +10,7 @@ game/
 *.pdb
 build/
 tools/zig/
+tools/realesrgan/
 # per-player files the game writes next to itself
 woodyre.cfg
 woodyre.sav

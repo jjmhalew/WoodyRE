@@ -23,7 +23,9 @@ standalone exe; the developer build uses the current directory):
 - `mods\dump\<level>\` - written by `--dumptex`: every texture as `<w>x<h>_<hash>.png`, exactly as the game shows it
   (colour key texels transparent black). Bank 0 (`Common\<character>.rck`) goes to `mods\dump\Common\`. A texture
   that is already there is not written again. Play through a level with `--dumptex` to collect everything it uses;
-  the `.tex` and the bank images are complete at level load, only the BlackBox images come later.
+  the `.tex` and the bank images are complete at level load, only the BlackBox images come later. `--dumptex all`
+  loads and frees every level once and quits: everything except the BlackBox images (975 different textures on the
+  English CD, 2747 files counting the copies per level).
 
 ## 3. How a replacement is drawn
 - The game keeps every size, texture coordinate and HUD layout of the original; only the sampled image changes. Keep
@@ -36,3 +38,21 @@ standalone exe; the developer build uses the current directory):
   use the PNG's alpha as is.
 - What cannot be replaced: polygons drawn in a flat material colour (material bit 15, ARGB1555 - Woody's own body is
   such a model), the 16 radial light textures (generated, 0x480090), the HNM films, and the rendered shadows.
+
+## 4. An AI-upscaled pack: `make_hd_textures.bat`
+A script in the repository root makes a 4x pack on the player's own PC (Windows; any Vulkan GPU):
+1. `WoodyRE.exe --dumptex all` (§2);
+2. `texup pre` (`tools/native/texup.c`, built by `build.bat texup`): every texture once (by hash) that the pack does
+   not have yet, with a margin of half its size on every side - its own opposite edges for an opaque texture (so the
+   upscaler sees it repeat and leaves no seam where it tiles), its edge texels for one with transparency. Transparent
+   texels first get the colour of their opaque neighbours (bled outwards ring by ring), so the black under the colour
+   key does not smear into the edges; the alpha goes to a separate grey image with the same margin;
+3. Real-ESRGAN ncnn-vulkan (github.com/xinntao/Real-ESRGAN, release v0.2.5.0, downloaded once into `tools\realesrgan`
+   and checked against its SHA-256) upscales both 4x; default model `realesr-animevideov3-x4` (closest to the original
+   art, ~30 s for the whole game on an RX 6800), `make_hd_textures.bat anime` = `realesrgan-x4plus-anime` (crisper
+   edges, flattens noisy surfaces like sand, water and grass; ~2 min);
+4. `texup post` crops the margin off, takes the alpha from its own upscale (cut at 128 again where the original was
+   on/off, i.e. the colour key; as is where it was soft) and writes `mods\textures\hd\<w>x<h>_<hash>.png`.
+A second run only does textures the pack lacks, so deleting single PNGs (the original comes back) or adding a level's
+BlackBox dump later is cheap. The pack is about 460 MB and makes a level load ~1 s longer. It is derived from the game's
+own art: for the player's own use, never part of the repository or a release.
