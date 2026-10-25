@@ -84,11 +84,12 @@ static void mkdirs(const char *path)                    /* every folder of the p
 }
 static void stem(const char *name, char *out, size_t n) { snprintf(out, n, "%.*s", (int)(strlen(name) - 4), name); }
 
-/* the transparent texels take the average colour of their opaque (or already filled) neighbours, ring by ring */
+/* the fully transparent texels take the average colour of their seen (or already filled) neighbours, ring by ring; a
+ * texel with any alpha keeps its own colour (a soft edge, a see-through pane: its tint) */
 static void bleed(uint8_t *px, int w, int h)
 {
     uint8_t *done = (uint8_t *)malloc((size_t)w * h), *next = (uint8_t *)malloc((size_t)w * h); int left = 0;
-    for (int i = 0; i < w * h; i++) { done[i] = px[i * 4 + 3] >= 128; left += !done[i]; }
+    for (int i = 0; i < w * h; i++) { done[i] = px[i * 4 + 3] > 0; left += !done[i]; }
     for (int pass = 0; left && pass < w + h; pass++) {
         memcpy(next, done, (size_t)w * h);
         for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
