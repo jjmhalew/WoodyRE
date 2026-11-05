@@ -13,12 +13,28 @@
 static inline void plat_message(const char *text, int warn) { MessageBoxA(NULL, text, "WoodyRE", warn ? MB_ICONWARNING : MB_ICONINFORMATION); }
 #define plat_replace(from, to) (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)   /* 1 = file from now is file to */
 #else
-#define plat_replace(from, to) (rename(from, to) == 0)
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#ifdef __SWITCH__
+#include <errno.h>
+/* libnx's rename() is the FS service's RenameFile, which refuses a name that exists (2002-0002, EEXIST): a plain rename
+ * failed every save but the first (issue #5). So the old file steps aside as to.old, the new one takes its name, then the
+ * old one goes; file_read takes to.old back when a crash between the two renames left only that one. */
+static inline int plat_replace(const char *from, const char *to)
+{
+    char old[512]; snprintf(old, sizeof old, "%s.old", to);
+    remove(old);
+    if (rename(to, old) && errno != ENOENT) return 0;
+    if (rename(from, to)) { rename(old, to); return 0; }
+    remove(old);
+    return 1;
+}
+#else
+#define plat_replace(from, to) (rename(from, to) == 0)
+#endif
 #define APIENTRY
 #define WINAPI
 #define _stricmp strcasecmp

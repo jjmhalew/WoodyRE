@@ -445,6 +445,9 @@ static int  file_write(void)                                     /* 0x450b30; th
 static int file_read(void)
 {
     static const char *src[3] = { "woodyre.sav", "game/Woody.sav", "Woody.sav" };
+#ifdef __SWITCH__
+    if (!plat_exists(src[0]) && plat_exists("woodyre.sav.old")) rename("woodyre.sav.old", src[0]);   /* a crash between the two renames of plat_replace */
+#endif
     for (int k = 0; k < 3; k++) {
         FILE *f = fopen(src[k], "rb"); if (!f) continue;
         static uint8_t buf[sizeof(SaveFile)]; size_t n = fread(buf, 1, sizeof buf, f); fclose(f);
